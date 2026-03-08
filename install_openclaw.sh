@@ -67,6 +67,21 @@ node_major_version() {
   node -p "process.versions.node.split('.')[0]"
 }
 
+macos_node_path_is_service_safe() {
+  local node_path
+  node_path="$(command -v node 2>/dev/null || true)"
+  [ -n "$node_path" ] || return 1
+
+  case "$node_path" in
+    /opt/homebrew/*/bin/node|/usr/local/*/bin/node|/opt/homebrew/bin/node|/usr/local/bin/node)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 load_nvm() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ -s "$NVM_DIR/nvm.sh" ]; then
@@ -198,10 +213,15 @@ ensure_node() {
   local major
   if major="$(node_major_version 2>/dev/null)"; then
     if [ "$major" -ge 22 ]; then
-      log "已检测到 Node.js v$(node -v | sed 's/^v//')"
-      return 0
+      if [ "$OS" = "macos" ] && ! macos_node_path_is_service_safe; then
+        warn "当前 Node.js 路径对 macOS launchd 不友好：$(command -v node)，将切换到 Homebrew node@22"
+      else
+        log "已检测到 Node.js v$(node -v | sed 's/^v//')"
+        return 0
+      fi
+    else
+      warn "当前 Node.js 版本过低：$(node -v)，将升级到 22+"
     fi
-    warn "当前 Node.js 版本过低：$(node -v)，将升级到 22+"
   else
     warn "未检测到 Node.js，将自动安装 22+"
   fi
