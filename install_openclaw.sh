@@ -250,19 +250,19 @@ install_openclaw() {
   log "安装 OpenClaw"
   ensure_npm_global_bin_in_path
 
-  local installed_version latest_version prefix install_ok=0
+  local installed_version="" latest_version="" prefix="" install_ok=0
   installed_version="$(installed_openclaw_version 2>/dev/null || true)"
   latest_version="$(latest_openclaw_version 2>/dev/null || true)"
 
-  if [ -n "$installed_version" ] && [ -n "$latest_version" ] && [ "$installed_version" = "$latest_version" ]; then
-    log "检测到已安装最新版 OpenClaw：$installed_version，跳过安装"
+  if [ -n "${installed_version:-}" ] && [ -n "${latest_version:-}" ] && [ "${installed_version:-}" = "${latest_version:-}" ]; then
+    log "检测到已安装最新版 OpenClaw：${installed_version:-}，跳过安装"
     return 0
   fi
 
-  if [ -n "$installed_version" ] && [ -n "$latest_version" ]; then
-    log "检测到本地 OpenClaw：$installed_version，npm 最新版：$latest_version，将执行升级"
-  elif [ -n "$installed_version" ]; then
-    warn "已安装 OpenClaw：$installed_version，但未能确认 npm 最新版本，将尝试升级"
+  if [ -n "${installed_version:-}" ] && [ -n "${latest_version:-}" ]; then
+    log "检测到本地 OpenClaw：${installed_version:-}，npm 最新版：${latest_version:-}，将执行升级"
+  elif [ -n "${installed_version:-}" ]; then
+    warn "已安装 OpenClaw：${installed_version:-}，但未能确认 npm 最新版本，将尝试升级"
   else
     log "未检测到 OpenClaw，将执行安装"
   fi
@@ -297,7 +297,7 @@ prompt_api_key() {
 
   printf '请输入 NewAPI API Key: '
   read -r -s NEWAPI_API_KEY
-  printf '\\n'
+  printf '\n'
   [ -n "$NEWAPI_API_KEY" ] || fail "API Key 不能为空"
   export NEWAPI_API_KEY
 }
