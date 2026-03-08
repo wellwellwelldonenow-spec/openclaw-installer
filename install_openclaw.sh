@@ -7,6 +7,8 @@ PROVIDER_ID="megabyai"
 BASE_URL="https://newapi.megabyai.cc/v1"
 MODEL_ID="gpt-5.3-codex"
 MODEL_NAME="gpt-5.3-codex (newapi)"
+OS=""
+ARCH=""
 
 log() {
   printf '\033[1;34m[INFO]\033[0m %s\n' "$*"
@@ -22,7 +24,7 @@ fail() {
 }
 
 cleanup() {
-  rm -f /tmp/nodesource_setup_22.sh /tmp/openclaw_models_check.json
+  rm -f /tmp/nodesource_setup_22.sh /tmp/openclaw_models_check.json /tmp/openclaw_xcode_install.log
 }
 
 trap cleanup EXIT
@@ -41,12 +43,20 @@ run_privileged() {
   fi
 }
 
-detect_os() {
+detect_platform() {
   case "$(uname -s)" in
     Linux) OS="linux" ;;
     Darwin) OS="macos" ;;
     *) fail "暂不支持当前系统：$(uname -s)" ;;
   esac
+
+  case "$(uname -m)" in
+    x86_64|amd64) ARCH="x64" ;;
+    arm64|aarch64) ARCH="arm64" ;;
+    *) ARCH="$(uname -m)" ;;
+  esac
+
+  log "检测到系统：$OS ($ARCH)"
 }
 
 node_major_version() {
@@ -64,6 +74,63 @@ load_nvm() {
   fi
 }
 
+ensure_macos_devtools() {
+  log "检查 macOS 开发者工具"
+
+  if xcode-select -p >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && command -v clang >/dev/null 2>&1; then
+    log "Xcode Command Line Tools 已安装"
+    return 0
+  fi
+
+  warn "未检测到 Xcode Command Line Tools，尝试触发系统安装"
+
+  if ! command -v xcode-select >/dev/null 2>&1; then
+    fail "系统缺少 xcode-select，无法继续"
+  fi
+
+  if xcode-select --install >/tmp/openclaw_xcode_install.log 2>&1; then
+    warn "已触发 Xcode Command Line Tools 安装，请在系统弹窗中完成安装"
+  else
+    if grep -qi 'already installed' /tmp/openclaw_xcode_install.log 2>/dev/null; then
+      log "系统提示 Command Line Tools 已安装，继续后续检测"
+    else
+      cat /tmp/openclaw_xcode_install.log >&2 || true
+    fi
+  fi
+
+  if xcode-select -p >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && command -v clang >/dev/null 2>&1; then
+    log "Xcode Command Line Tools 已可用"
+    return 0
+  fi
+
+  fail "macOS 缺少 Xcode Command Line Tools。请先完成安装后重新运行脚本。"
+}
+
+ensure_homebrew_in_path() {
+  if command -v brew >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ -x /opt/homebrew/bin/brew ]; then
+    export PATH="/opt/homebrew/bin:$PATH"
+    return 0
+  fi
+
+  if [ -x /usr/local/bin/brew ]; then
+    export PATH="/usr/local/bin:$PATH"
+    return 0
+  fi
+
+  return 1
+}
+
+install_homebrew() {
+  ensure_homebrew_in_path && return 0
+  log "安装 Homebrew"
+  NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  ensure_homebrew_in_path || fail "Homebrew 安装失败"
+}
+
 install_nvm() {
   load_nvm
   if command -v nvm >/dev/null 2>&1; then
@@ -78,6 +145,24 @@ install_nvm() {
 
 install_node_macos() {
   log "在 macOS 上准备 Node.js 22"
+  ensure_macos_devtools
+
+  if ensure_homebrew_in_path; then
+    log "检测到 Homebrew，优先通过 Homebrew 安装 Node.js 22"
+    brew install node@22
+    if brew list node@22 >/dev/null 2>&1; then
+      local brew_prefix
+      brew_prefix="$(brew --prefix node@22)"
+      export PATH="$brew_prefix/bin:$PATH"
+    fi
+    if command -v node >/dev/null 2>&1 && [ "$(node_major_version)" -ge 22 ]; then
+      return 0
+    fi
+    warn "Homebrew 安装后 Node.js 仍不可用，改用 nvm"
+  else
+    warn "未检测到 Homebrew，改用 nvm 安装 Node.js"
+  fi
+
   install_nvm
   nvm install 22
   nvm alias default 22 >/dev/null
@@ -310,20 +395,21 @@ probe_provider() {
 }
 
 main() {
-  detect_os
+  detect_platform
   need_cmd curl
   prompt_api_key "${1:-}"
   ensure_node
-  ensure_openclaw
+  install_openclaw
   verify_upstream_api
   ensure_openclaw_initialized
   write_openclaw_config
   validate_openclaw
   probe_provider || true
 
-  cat <<EOF
+  cat <<MSG
 
 安装完成。
+- 系统：$OS ($ARCH)
 - OpenClaw 已安装并初始化
 - 网关端口：$OPENCLAW_PORT
 - Provider：$PROVIDER_ID
@@ -331,7 +417,7 @@ main() {
 
 可继续手动测试：
   openclaw agent --local --message "测试：请回复OK"
-EOF
+MSG
 }
 
 main "$@"
