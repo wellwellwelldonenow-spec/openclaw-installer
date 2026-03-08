@@ -280,19 +280,84 @@ prompt_api_key() {
   export NEWAPI_API_KEY
 }
 
+verify_upstream_api_with_curl() {
+  local http_code curl_output curl_exit
+  curl_output='/tmp/openclaw_models_check.json'
+
+  if http_code="$(curl --http1.1 --tlsv1.2 --retry 2 --retry-delay 1     --connect-timeout 15 --max-time 30     -sS -o "$curl_output" -w '%{http_code}'     "$BASE_URL/models"     -H "Authorization: Bearer $NEWAPI_API_KEY")"; then
+    if [ "$http_code" = "200" ]; then
+      return 0
+    fi
+
+    warn "curl 校验返回 HTTP $http_code"
+    sed -n '1,40p' "$curl_output" >&2 || true
+    return 1
+  fi
+
+  curl_exit=$?
+  warn "curl 校验失败，退出码：$curl_exit"
+  return 1
+}
+
+verify_upstream_api_with_node() {
+  local node_output node_status
+  node_output='/tmp/openclaw_models_check.json'
+
+  if node_status="$(node - "$BASE_URL/models" "$NEWAPI_API_KEY" "$node_output" <<'NODE'
+const fs = require('fs');
+
+const [url, apiKey, outputPath] = process.argv.slice(2);
+
+(async () => {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+    const text = await response.text();
+    fs.writeFileSync(outputPath, text);
+    process.stdout.write(String(response.status));
+  } catch (error) {
+    fs.writeFileSync(outputPath, String(error && error.stack ? error.stack : error));
+    process.stdout.write('FETCH_ERROR');
+    process.exit(1);
+  }
+})();
+NODE
+)"; then
+    if [ "$node_status" = "200" ]; then
+      return 0
+    fi
+
+    warn "Node.js 校验返回 HTTP $node_status"
+    sed -n '1,40p' "$node_output" >&2 || true
+    return 1
+  fi
+
+  warn "Node.js 校验失败"
+  sed -n '1,40p' "$node_output" >&2 || true
+  return 1
+}
+
 verify_upstream_api() {
   log "验证上游 NewAPI 接口"
-  local http_code
 
-  http_code="$(curl -sS -o /tmp/openclaw_models_check.json -w '%{http_code}' \
-    "$BASE_URL/models" \
-    -H "Authorization: Bearer $NEWAPI_API_KEY")"
-
-  if [ "$http_code" != "200" ]; then
-    warn "上游接口返回 HTTP $http_code"
-    sed -n '1,40p' /tmp/openclaw_models_check.json >&2 || true
-    fail "API Key 无效或上游接口不可用"
+  if [ "${OPENCLAW_SKIP_UPSTREAM_CHECK:-0}" = '1' ]; then
+    warn '已跳过上游接口校验（OPENCLAW_SKIP_UPSTREAM_CHECK=1）'
+    return 0
   fi
+
+  if verify_upstream_api_with_curl; then
+    return 0
+  fi
+
+  warn 'curl 探测失败，改用 Node.js TLS 栈重试'
+  if verify_upstream_api_with_node; then
+    return 0
+  fi
+
+  fail 'API Key 无效、上游接口不可用，或本机网络/TLS 连接存在问题'
 }
 
 ensure_openclaw_initialized() {
