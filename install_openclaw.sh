@@ -5,8 +5,9 @@ set -Eeuo pipefail
 OPENCLAW_PORT="${OPENCLAW_PORT:-18789}"
 PROVIDER_ID="megabyai"
 BASE_URL="https://newapi.megabyai.cc/v1"
-MODEL_ID="gpt-5.3-codex"
-MODEL_NAME="gpt-5.3-codex (newapi)"
+MODEL_ID_DEFAULT="gpt-5.3-codex"
+MODEL_ID="${OPENCLAW_MODEL_ID:-$MODEL_ID_DEFAULT}"
+MODEL_NAME="${MODEL_ID} (newapi)"
 OS=""
 ARCH=""
 
@@ -236,15 +237,36 @@ ensure_npm_global_bin_in_path() {
   esac
 }
 
+installed_openclaw_version() {
+  command -v openclaw >/dev/null 2>&1 || return 1
+  openclaw --version 2>/dev/null | tail -n 1 | tr -d '[:space:]'
+}
+
+latest_openclaw_version() {
+  npm view openclaw version --silent 2>/dev/null | tail -n 1 | tr -d '[:space:]'
+}
+
 install_openclaw() {
   log "安装 OpenClaw"
-  if command -v openclaw >/dev/null 2>&1; then
-    log "检测到已安装的 OpenClaw：$(openclaw --version)，将执行升级/覆盖安装"
-  fi
-
   ensure_npm_global_bin_in_path
 
-  local prefix install_ok=0
+  local installed_version latest_version prefix install_ok=0
+  installed_version="$(installed_openclaw_version 2>/dev/null || true)"
+  latest_version="$(latest_openclaw_version 2>/dev/null || true)"
+
+  if [ -n "$installed_version" ] && [ -n "$latest_version" ] && [ "$installed_version" = "$latest_version" ]; then
+    log "检测到已安装最新版 OpenClaw：$installed_version，跳过安装"
+    return 0
+  fi
+
+  if [ -n "$installed_version" ] && [ -n "$latest_version" ]; then
+    log "检测到本地 OpenClaw：$installed_version，npm 最新版：$latest_version，将执行升级"
+  elif [ -n "$installed_version" ]; then
+    warn "已安装 OpenClaw：$installed_version，但未能确认 npm 最新版本，将尝试升级"
+  else
+    log "未检测到 OpenClaw，将执行安装"
+  fi
+
   prefix="$(npm config get prefix 2>/dev/null || true)"
 
   if [ -n "$prefix" ] && [ -w "$prefix" ]; then
@@ -275,9 +297,32 @@ prompt_api_key() {
 
   printf '请输入 NewAPI API Key: '
   read -r -s NEWAPI_API_KEY
-  printf '\n'
+  printf '\\n'
   [ -n "$NEWAPI_API_KEY" ] || fail "API Key 不能为空"
   export NEWAPI_API_KEY
+}
+
+prompt_model() {
+  local input_model
+
+  if [ -n "${OPENCLAW_MODEL_ID:-}" ]; then
+    MODEL_ID="$OPENCLAW_MODEL_ID"
+    MODEL_NAME="${MODEL_ID} (newapi)"
+    log "使用环境变量指定模型：$MODEL_ID"
+    return 0
+  fi
+
+  printf '请输入模型 ID（默认 %s）: ' "$MODEL_ID_DEFAULT"
+  read -r input_model || true
+
+  if [ -n "${input_model:-}" ]; then
+    MODEL_ID="$input_model"
+  else
+    MODEL_ID="$MODEL_ID_DEFAULT"
+  fi
+
+  MODEL_NAME="${MODEL_ID} (newapi)"
+  log "使用模型：$MODEL_ID"
 }
 
 verify_upstream_api_with_curl() {
@@ -466,6 +511,7 @@ main() {
   detect_platform
   need_cmd curl
   prompt_api_key "${1:-}"
+  prompt_model
   ensure_node
   install_openclaw
   verify_upstream_api
