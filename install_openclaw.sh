@@ -147,27 +147,19 @@ install_nvm() {
 install_node_macos() {
   log "在 macOS 上准备 Node.js 22"
   ensure_macos_devtools
+  ensure_homebrew_in_path || install_homebrew
 
-  if ensure_homebrew_in_path; then
-    log "检测到 Homebrew，优先通过 Homebrew 安装 Node.js 22"
-    brew install node@22
-    if brew list node@22 >/dev/null 2>&1; then
-      local brew_prefix
-      brew_prefix="$(brew --prefix node@22)"
-      export PATH="$brew_prefix/bin:$PATH"
-    fi
-    if command -v node >/dev/null 2>&1 && [ "$(node_major_version)" -ge 22 ]; then
-      return 0
-    fi
-    warn "Homebrew 安装后 Node.js 仍不可用，改用 nvm"
-  else
-    warn "未检测到 Homebrew，改用 nvm 安装 Node.js"
+  log "通过 Homebrew 安装 Node.js 22"
+  brew install node@22
+
+  if brew list node@22 >/dev/null 2>&1; then
+    local brew_prefix
+    brew_prefix="$(brew --prefix node@22)"
+    export PATH="$brew_prefix/bin:$PATH"
   fi
 
-  install_nvm
-  nvm install 22
-  nvm alias default 22 >/dev/null
-  nvm use 22 >/dev/null
+  command -v node >/dev/null 2>&1 || fail "Homebrew 安装 Node.js 后仍不可用"
+  [ "$(node_major_version)" -ge 22 ] || fail "Homebrew 安装后的 Node.js 版本仍低于 22：$(node -v)"
 }
 
 install_node_linux() {
@@ -236,6 +228,18 @@ ensure_npm_global_bin_in_path() {
     *) export PATH="$prefix/bin:$PATH" ;;
   esac
 }
+
+gateway_health_check() {
+  openclaw gateway call health --url "ws://127.0.0.1:${OPENCLAW_PORT}" --timeout 5000 >/dev/null 2>&1
+}
+
+repair_gateway_service() {
+  warn "网关健康检查失败，尝试执行 openclaw doctor 修复服务"
+  openclaw doctor || true
+  openclaw gateway install --runtime node --port "$OPENCLAW_PORT" --force
+  openclaw gateway restart || openclaw gateway start || true
+}
+
 
 installed_openclaw_version() {
   command -v openclaw >/dev/null 2>&1 || return 1
@@ -422,6 +426,16 @@ ensure_openclaw_initialized() {
   log "安装并启动网关"
   openclaw gateway install --runtime node --port "$OPENCLAW_PORT" --force
   openclaw gateway start || openclaw gateway restart
+
+  if ! gateway_health_check; then
+    repair_gateway_service
+  fi
+
+  if ! gateway_health_check; then
+    openclaw gateway status || true
+    fail "网关仍未监听 127.0.0.1:${OPENCLAW_PORT}，请检查 /tmp/openclaw/openclaw-gateway.log"
+  fi
+
   openclaw gateway status || true
 }
 
