@@ -9,8 +9,9 @@
 - macOS 自动检测 `Xcode Command Line Tools`
 - 缺失时自动触发 `xcode-select --install`
 - 自动安装或升级 `openclaw`
-- 自动初始化本地网关
+- 自动以无交互方式完成 `OpenClaw onboard`
 - 自动写入 `https://newapi.megabyai.cc/v1` 的 OpenAI 兼容配置
+- 自动设置默认模型为 `megabyai/gpt-5.3-codex`
 - 上游接口自动校验，优先使用 `curl`，失败时自动回退到 `Node.js` TLS 栈
 - 启动并校验 OpenClaw 网关与模型探测
 
@@ -20,7 +21,7 @@
 curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh
 ```
 
-脚本会在运行时提示输入 API Key，并自动完成剩余步骤。
+脚本会在运行时提示输入 API Key，并自动完成剩余步骤，不需要再手动选择模型。
 
 ## 本地执行
 
