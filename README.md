@@ -8,6 +8,7 @@
 - 自动检测并安装 Node.js 22+
 - macOS 自动检测 `Xcode Command Line Tools`
 - macOS 自动安装 `Homebrew`，并固定使用 `Homebrew node@22`
+- macOS 需要系统级安装时会自动触发 `sudo` 验证
 - 避免 `launchd` 因 `nvm`/shell PATH 导致网关无法拉起
 - 自动检测 `openclaw` 是否已是 npm 最新版，是则跳过重装
 - 自动安装或升级 `openclaw`
@@ -35,6 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-i
 
 - 如果系统缺少 `Xcode Command Line Tools`，脚本会自动触发安装
 - 如果本机缺少 `Homebrew`，脚本会自动安装 `Homebrew`
+- 如果需要管理员权限，脚本会自动提示你输入一次 macOS 登录密码
 - 脚本会优先使用 `Homebrew` 安装 `node@22`，避免 `launchd` 找不到 `nvm` 下的 Node
 - 如果 `curl` 因 `LibreSSL SSL_connect` 失败，脚本会自动改用 `Node.js` 发起上游探测
 - 如果网关进程存在但端口未监听，脚本会自动执行 `openclaw doctor` 并重试一次
