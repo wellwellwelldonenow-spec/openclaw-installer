@@ -680,6 +680,86 @@ ensure_npm_global_bin_in_path() {
   esac
 }
 
+strip_managed_profile_block() {
+  local profile="$1" temp_file
+  [ -f "$profile" ] || return 0
+
+  temp_file="$(mktemp)"
+  awk '
+    /^# >>> openclaw-installer >>>$/ { skip=1; next }
+    /^# <<< openclaw-installer <<<$/{ skip=0; next }
+    !skip { print }
+  ' "$profile" >"$temp_file"
+  mv "$temp_file" "$profile"
+}
+
+persist_path_in_profile() {
+  local profile="$1" bin_dir="$2"
+
+  [ -n "$profile" ] || return 0
+  mkdir -p "$(dirname "$profile")"
+  touch "$profile"
+  strip_managed_profile_block "$profile"
+
+  if [ -s "$profile" ]; then
+    printf '\n' >>"$profile"
+  fi
+
+  cat >>"$profile" <<EOF
+# >>> openclaw-installer >>>
+if [ -d "$bin_dir" ]; then
+  case ":\$PATH:" in
+    *":$bin_dir:"*) ;;
+    *) export PATH="$bin_dir:\$PATH" ;;
+  esac
+fi
+# <<< openclaw-installer <<<
+EOF
+}
+
+persist_openclaw_cli_path() {
+  local prefix bin_dir shell_name primary_profile profile
+  local -a profiles=()
+
+  prefix="$(npm config get prefix 2>/dev/null || true)"
+  [ -n "$prefix" ] || return 0
+  bin_dir="$prefix/bin"
+  [ -d "$bin_dir" ] || return 0
+
+  case "$bin_dir" in
+    /usr/local/bin|/opt/homebrew/bin|/usr/bin|/bin)
+      return 0
+      ;;
+  esac
+
+  shell_name="$(basename "${SHELL:-}")"
+  case "$shell_name" in
+    zsh) primary_profile="$HOME/.zprofile" ;;
+    bash) primary_profile="$HOME/.bash_profile" ;;
+    *) primary_profile="$HOME/.profile" ;;
+  esac
+  profiles+=("$primary_profile")
+
+  for profile in \
+    "$HOME/.zprofile" \
+    "$HOME/.zshrc" \
+    "$HOME/.bash_profile" \
+    "$HOME/.bashrc" \
+    "$HOME/.profile"
+  do
+    [ -f "$profile" ] || continue
+    case " ${profiles[*]} " in
+      *" $profile "*) ;;
+      *) profiles+=("$profile") ;;
+    esac
+  done
+
+  log "持久化 OpenClaw CLI PATH：$bin_dir"
+  for profile in "${profiles[@]}"; do
+    persist_path_in_profile "$profile" "$bin_dir"
+  done
+}
+
 path_entry_uses_version_manager() {
   case "$1" in
     *"/.nvm/"*|*"/.fnm/"*|*"/.volta/"*|*"/.asdf/"*|*/shim|*/shim/*|*/shims|*/shims/*)
@@ -1175,6 +1255,8 @@ install_openclaw() {
   fi
 
   ensure_npm_global_bin_in_path
+  persist_openclaw_cli_path
+  hash -r 2>/dev/null || true
   command -v openclaw >/dev/null 2>&1 || fail "OpenClaw 安装后未找到命令"
   log "OpenClaw 版本：$(openclaw --version)"
 }
@@ -1359,6 +1441,7 @@ write_openclaw_config() {
   log "写入 OpenClaw 配置：$config_path"
   node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" "$OPENCLAW_PORT" <<'NODE'
 const fs = require('fs');
+const crypto = require('crypto');
 
 const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort] = process.argv.slice(2);
 
@@ -1398,6 +1481,13 @@ config.gateway.bind = 'loopback';
 config.gateway.port = Number(gatewayPort);
 config.gateway.reload = config.gateway.reload || {};
 config.gateway.reload.mode = config.gateway.reload.mode || 'hybrid';
+config.gateway.auth = config.gateway.auth || {};
+if (typeof config.gateway.auth.token !== 'string' || !config.gateway.auth.token.trim()) {
+  config.gateway.auth.token = crypto.randomBytes(24).toString('hex');
+}
+if (!config.gateway.auth.mode || (config.gateway.auth.mode === 'password' && !config.gateway.auth.password)) {
+  config.gateway.auth.mode = 'token';
+}
 
 config.agents = config.agents || {};
 config.agents.defaults = config.agents.defaults || {};
@@ -1416,6 +1506,54 @@ if (typeof config.agents.defaults.memorySearch.provider === 'undefined' && typeo
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
 `);
 NODE
+}
+
+gateway_auth_token() {
+  local config_path="$1"
+  [ -f "$config_path" ] || return 1
+
+  node - "$config_path" <<'NODE'
+const fs = require('fs');
+const configPath = process.argv[2];
+try {
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const token = config && config.gateway && config.gateway.auth && config.gateway.auth.token;
+  if (typeof token === 'string' && token.trim()) {
+    process.stdout.write(token.trim());
+  }
+} catch {}
+NODE
+}
+
+extract_dashboard_url() {
+  awk 'match($0, /https?:\/\/[^[:space:]]+/) { print substr($0, RSTART, RLENGTH); exit }'
+}
+
+open_dashboard_ui() {
+  local config_path state_dir token dashboard_output dashboard_url
+  config_path="$(resolve_config_path)"
+  state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+  token="$(gateway_auth_token "$config_path" 2>/dev/null || true)"
+
+  log "尝试打开 OpenClaw Control UI"
+  dashboard_output="$(run_openclaw_with_service_env "$config_path" "$state_dir" dashboard 2>&1 || true)"
+  dashboard_url="$(printf '%s\n' "$dashboard_output" | extract_dashboard_url)"
+  [ -n "$dashboard_url" ] || dashboard_url="http://127.0.0.1:$OPENCLAW_PORT/"
+
+  case "$OS" in
+    macos)
+      command -v open >/dev/null 2>&1 && open "$dashboard_url" >/dev/null 2>&1 || true
+      ;;
+    linux)
+      command -v xdg-open >/dev/null 2>&1 && xdg-open "$dashboard_url" >/dev/null 2>&1 || true
+      ;;
+  esac
+
+  log "Control UI：$dashboard_url"
+  if [ -n "$token" ]; then
+    log "Gateway token：$token"
+    warn "若 UI 提示 unauthorized，请在 Control UI settings 中粘贴上面的 gateway token"
+  fi
 }
 
 validate_openclaw() {
@@ -1507,6 +1645,21 @@ remove_openclaw_state() {
   done
 }
 
+remove_openclaw_cli_path_persistence() {
+  local profile
+
+  for profile in \
+    "$HOME/.zprofile" \
+    "$HOME/.zshrc" \
+    "$HOME/.bash_profile" \
+    "$HOME/.bashrc" \
+    "$HOME/.profile"
+  do
+    [ -f "$profile" ] || continue
+    strip_managed_profile_block "$profile"
+  done
+}
+
 remove_script_installed_node_linux() {
   local nodejs_version
 
@@ -1548,6 +1701,7 @@ uninstall_openclaw() {
   remove_gateway_service
   remove_openclaw_global_installs
   remove_openclaw_state
+  remove_openclaw_cli_path_persistence
 
   if [ "$OS" = "linux" ]; then
     remove_script_installed_node_linux
@@ -1584,6 +1738,7 @@ main() {
   validate_openclaw
   install_and_start_gateway
   probe_provider || true
+  open_dashboard_ui
 
   cat <<MSG
 
@@ -1593,6 +1748,8 @@ main() {
 - 网关端口：$OPENCLAW_PORT
 - Provider：$PROVIDER_ID
 - Model：$MODEL_ID
+- Dashboard：http://127.0.0.1:$OPENCLAW_PORT/
+- Gateway token：$(gateway_auth_token "$config_path" 2>/dev/null || printf '%s' '未读取到，请执行 openclaw config get gateway.auth.token')
 
 可继续手动测试：
   openclaw gateway status --deep

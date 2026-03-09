@@ -850,6 +850,7 @@ function Write-OpenClawConfig {
 
     $nodeScript = @"
 const fs = require('fs');
+const crypto = require('crypto');
 const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort] = process.argv.slice(1);
 let config = {};
 if (fs.existsSync(configPath)) {
@@ -873,6 +874,13 @@ config.gateway.bind = 'loopback';
 config.gateway.port = Number(gatewayPort);
 config.gateway.reload = config.gateway.reload || {};
 config.gateway.reload.mode = config.gateway.reload.mode || 'hybrid';
+config.gateway.auth = config.gateway.auth || {};
+if (typeof config.gateway.auth.token !== 'string' || !config.gateway.auth.token.trim()) {
+  config.gateway.auth.token = crypto.randomBytes(24).toString('hex');
+}
+if (!config.gateway.auth.mode || (config.gateway.auth.mode === 'password' && !config.gateway.auth.password)) {
+  config.gateway.auth.mode = 'token';
+}
 config.agents = config.agents || {};
 config.agents.defaults = config.agents.defaults || {};
 config.agents.defaults.model = config.agents.defaults.model || {};
@@ -890,6 +898,61 @@ fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 "@
 
     & node -e $nodeScript $configPath $ApiKey $BaseUrl $ProviderId $ModelId "$ModelId (newapi)" $GatewayPort
+}
+
+function Get-GatewayToken([string]$ConfigPath) {
+    if ([string]::IsNullOrWhiteSpace($ConfigPath) -or -not (Test-Path $ConfigPath)) {
+        return $null
+    }
+
+    $nodeScript = @"
+const fs = require('fs');
+const configPath = process.argv[1];
+try {
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const token = config && config.gateway && config.gateway.auth && config.gateway.auth.token;
+  if (typeof token === 'string' && token.trim()) {
+    process.stdout.write(token.trim());
+  }
+} catch {}
+"@
+
+    $token = (& node -e $nodeScript $ConfigPath 2>$null | Select-Object -Last 1).Trim()
+    if ([string]::IsNullOrWhiteSpace($token)) {
+        return $null
+    }
+
+    return $token
+}
+
+function Open-Dashboard([string]$ConfigPath) {
+    $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { Join-Path $HOME '.openclaw' }
+    $dashboardOutput = ''
+    try {
+        $dashboardOutput = (Invoke-OpenClawWithServiceEnv -ConfigPath $ConfigPath -StateDir $stateDir dashboard 2>&1 | Out-String)
+    } catch {
+        $dashboardOutput = ($_ | Out-String)
+    }
+
+    $dashboardUrl = $null
+    $match = [regex]::Match($dashboardOutput, 'https?://\S+')
+    if ($match.Success) {
+        $dashboardUrl = $match.Value.Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($dashboardUrl)) {
+        $dashboardUrl = "http://127.0.0.1:$GatewayPort/"
+    }
+
+    try {
+        Start-Process $dashboardUrl | Out-Null
+    } catch {}
+
+    Write-Info "Control UI：$dashboardUrl"
+    $token = Get-GatewayToken $ConfigPath
+    if (-not [string]::IsNullOrWhiteSpace($token)) {
+        Write-Info "Gateway token：$token"
+        Write-WarnMsg '若 UI 提示 unauthorized，请在 Control UI settings 中粘贴上面的 gateway token'
+    }
 }
 
 function Validate-OpenClaw {
@@ -1013,6 +1076,7 @@ Write-OpenClawConfig
 Validate-OpenClaw
 Install-AndStartGateway
 Probe-Provider
+Open-Dashboard -ConfigPath $configPath
 
 Write-Host ''
 Write-Host '安装完成。' -ForegroundColor Green
@@ -1020,6 +1084,8 @@ Write-Host "- OpenClaw 已安装并初始化"
 Write-Host "- 网关端口：$GatewayPort"
 Write-Host "- Provider：$ProviderId"
 Write-Host "- Model：$ModelId"
+Write-Host "- Dashboard：http://127.0.0.1:$GatewayPort/"
+Write-Host "- Gateway token：$(if ($token = Get-GatewayToken $configPath) { $token } else { '未读取到，请执行 openclaw config get gateway.auth.token' })"
 Write-Host ''
 Write-Host '可继续手动测试：'
 Write-Host '  openclaw gateway status --deep'
