@@ -348,14 +348,42 @@ ensure_npm_global_bin_in_path() {
   esac
 }
 
-write_service_env() {
-  local config_home env_file service_path npm_prefix node_dir extra_paths cleaned_path config_path state_dir
-  config_home="$HOME/.openclaw"
-  env_file="$config_home/.env"
-  config_path="${1:-$HOME/.openclaw/openclaw.json}"
-  state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+path_entry_uses_version_manager() {
+  case "$1" in
+    *"/.nvm/"*|*"/.fnm/"*|*"/.volta/"*|*"/.asdf/"*|*/shim|*/shim/*|*/shims|*/shims/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
 
-  mkdir -p "$config_home"
+normalize_path_entries() {
+  local raw_path="$1" filtered="" entry old_ifs
+
+  old_ifs="$IFS"
+  IFS=':'
+  for entry in $raw_path; do
+    [ -n "$entry" ] || continue
+    if [ "$OS" = "linux" ] && path_entry_uses_version_manager "$entry"; then
+      continue
+    fi
+
+    case ":$filtered:" in
+      *":$entry:"*) ;;
+      *)
+        filtered="${filtered:+$filtered:}$entry"
+        ;;
+    esac
+  done
+  IFS="$old_ifs"
+
+  printf '%s\n' "$filtered"
+}
+
+build_service_path() {
+  local service_path npm_prefix node_dir extra_paths cleaned_path
 
   service_path="/usr/local/bin:/usr/bin:/bin"
   if [ "$OS" = "macos" ]; then
@@ -385,30 +413,77 @@ write_service_env() {
     cleaned_path="$extra_paths:$cleaned_path"
   fi
 
-  cleaned_path="$(printf '%s' "$cleaned_path" | awk -F: '
-    {
-      out="";
-      for (i=1; i<=NF; i++) {
-        if ($i == "") continue;
-        if (seen[$i]++) continue;
-        out = out (out ? ":" : "") $i;
-      }
-      print out;
-    }')"
+  normalize_path_entries "$cleaned_path"
+}
 
-  if [ "$OS" = "linux" ]; then
-    cleaned_path="$(printf '%s' "$cleaned_path" | awk -F: '
-      {
-        out="";
-        for (i=1; i<=NF; i++) {
-          if ($i == "") continue;
-          if ($i ~ /\\/.nvm\\// || $i ~ /\\/.fnm\\// || $i ~ /\\/.volta\\// || $i ~ /\\/.asdf\\// || $i ~ /\\/shims?$/) continue;
-          if (seen[$i]++) continue;
-          out = out (out ? ":" : "") $i;
-        }
-        print out;
-      }')"
-  fi
+openclaw_bin_path() {
+  local openclaw_bin
+  openclaw_bin="$(command -v openclaw 2>/dev/null || true)"
+  [ -n "$openclaw_bin" ] || fail "未找到 openclaw 命令"
+  printf '%s\n' "$openclaw_bin"
+}
+
+run_openclaw_with_service_env() {
+  local config_path="$1" state_dir="$2"
+  shift 2
+
+  env \
+    PATH="$(build_service_path)" \
+    OPENCLAW_PORT="$OPENCLAW_PORT" \
+    OPENCLAW_GATEWAY_PORT="$OPENCLAW_PORT" \
+    OPENCLAW_CONFIG_PATH="$config_path" \
+    OPENCLAW_STATE_DIR="$state_dir" \
+    NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache \
+    OPENCLAW_NO_RESPAWN=1 \
+    "$(openclaw_bin_path)" "$@"
+}
+
+rewrite_linux_gateway_service_unit() {
+  local unit_file="$HOME/.config/systemd/user/openclaw-gateway.service" config_path="$1" state_dir="$2"
+
+  [ "$OS" = "linux" ] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  [ -f "$unit_file" ] || return 0
+
+  node - "$unit_file" "$HOME" "$state_dir" "$config_path" "$(build_service_path)" <<'NODE'
+const fs = require('fs');
+
+const [unitFile, homeDir, stateDir, configPath, servicePath] = process.argv.slice(2);
+let text = fs.readFileSync(unitFile, 'utf8');
+
+const replacements = [
+  ['HOME', homeDir],
+  ['OPENCLAW_STATE_DIR', stateDir],
+  ['OPENCLAW_CONFIG_PATH', configPath],
+  ['PATH', servicePath],
+];
+
+for (const [key, value] of replacements) {
+  const pattern = new RegExp(`^Environment=(?:"?)${key}=.*(?:"?)$`, 'm');
+  const line = `Environment=${key}=${value}`;
+  if (pattern.test(text)) {
+    text = text.replace(pattern, line);
+    continue;
+  }
+
+  text = text.replace('[Service]\n', `[Service]\n${line}\n`);
+}
+
+fs.writeFileSync(unitFile, text);
+NODE
+
+  systemctl --user daemon-reload
+}
+
+write_service_env() {
+  local config_home env_file cleaned_path config_path state_dir
+  config_home="$HOME/.openclaw"
+  env_file="$config_home/.env"
+  config_path="${1:-$HOME/.openclaw/openclaw.json}"
+  state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+
+  mkdir -p "$config_home"
+  cleaned_path="$(build_service_path)"
 
   cat > "$env_file" <<EOF
 PATH=$cleaned_path
@@ -534,17 +609,30 @@ diagnose_gateway_failure() {
 }
 
 repair_gateway_service() {
+  local config_path state_dir
+  config_path="$(resolve_config_path)"
+  state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+
   warn '网关健康检查失败，尝试执行 openclaw doctor --fix 自动修复服务'
-  openclaw doctor --fix || openclaw doctor --yes || true
-  openclaw gateway install --runtime node --port "$OPENCLAW_PORT" --force
-  openclaw gateway restart || openclaw gateway start || true
+  run_openclaw_with_service_env "$config_path" "$state_dir" doctor --fix || \
+    run_openclaw_with_service_env "$config_path" "$state_dir" doctor --yes || true
+  run_openclaw_with_service_env "$config_path" "$state_dir" gateway install --runtime node --port "$OPENCLAW_PORT" --force
+  rewrite_linux_gateway_service_unit "$config_path" "$state_dir"
+  run_openclaw_with_service_env "$config_path" "$state_dir" gateway restart || \
+    run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
   sleep 3
 }
 
 install_and_start_gateway() {
+  local config_path state_dir
+  config_path="$(resolve_config_path)"
+  state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+
   log '安装并启动网关'
-  openclaw gateway install --runtime node --port "$OPENCLAW_PORT" --force
-  openclaw gateway restart || openclaw gateway start || true
+  run_openclaw_with_service_env "$config_path" "$state_dir" gateway install --runtime node --port "$OPENCLAW_PORT" --force
+  rewrite_linux_gateway_service_unit "$config_path" "$state_dir"
+  run_openclaw_with_service_env "$config_path" "$state_dir" gateway restart || \
+    run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
   sleep 3
 
   if ! gateway_health_check; then
@@ -741,7 +829,21 @@ bootstrap_openclaw() {
     log "检测到已有 OpenClaw 配置，跳过 onboard"
   else
     log "无交互初始化 OpenClaw"
-    if ! openclaw onboard       --non-interactive       --mode local       --auth-choice custom-api-key       --custom-provider-id "$PROVIDER_ID"       --custom-compatibility openai       --custom-base-url "$BASE_URL"       --custom-model-id "$MODEL_ID"       --custom-api-key "$NEWAPI_API_KEY"       --gateway-port "$OPENCLAW_PORT"       --gateway-bind loopback       --skip-skills; then
+    if ! openclaw onboard \
+      --non-interactive \
+      --accept-risk \
+      --mode local \
+      --auth-choice custom-api-key \
+      --custom-provider-id "$PROVIDER_ID" \
+      --custom-compatibility openai \
+      --custom-base-url "$BASE_URL" \
+      --custom-model-id "$MODEL_ID" \
+      --custom-api-key "$NEWAPI_API_KEY" \
+      --gateway-port "$OPENCLAW_PORT" \
+      --gateway-bind loopback \
+      --skip-daemon \
+      --skip-health \
+      --skip-skills; then
       warn "无交互 onboard 失败，回退到最小初始化流程"
       mkdir -p "$config_home"
     fi
@@ -756,8 +858,8 @@ resolve_config_path() {
   fi
 
   case "$config_path" in
-    ~/*) config_path="$HOME/${config_path#~/}" ;;
-    \$HOME/*) config_path="$HOME/${config_path#\$HOME/}" ;;
+    "~/"*) config_path="$HOME/${config_path#\~/}" ;;
+    '$HOME/'*) config_path="$HOME/${config_path#\$HOME/}" ;;
   esac
 
   printf '%s\n' "$config_path"
