@@ -124,7 +124,7 @@ function Test-ProxyCandidate([string]$ProxyUrl) {
         $params = @{
             Uri = 'https://github.com'
             Proxy = $ProxyUrl
-            TimeoutSec = 8
+            TimeoutSec = 4
             Method = 'Head'
         }
         if ($PSVersionTable.PSVersion.Major -lt 6) {
@@ -143,6 +143,50 @@ function Test-ProxyCandidate([string]$ProxyUrl) {
     }
 }
 
+function Get-LocalListeningPorts {
+    $ports = New-Object 'System.Collections.Generic.List[int]'
+
+    if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
+        foreach ($row in (Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue)) {
+            if ($null -eq $row.LocalPort) { continue }
+            $address = [string]$row.LocalAddress
+            if ($address -notin @('127.0.0.1', '::1', '0.0.0.0', '::', '::0', '::ffff:127.0.0.1')) {
+                continue
+            }
+            if (-not $ports.Contains([int]$row.LocalPort)) {
+                $ports.Add([int]$row.LocalPort)
+            }
+        }
+        return $ports | Sort-Object | Select-Object -First 64
+    }
+
+    foreach ($line in (netstat -ano -p tcp 2>$null)) {
+        if ($line -notmatch 'LISTENING') { continue }
+        $columns = ($line -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ($columns.Count -lt 2) { continue }
+        $localEndpoint = $columns[1]
+        $portText = ($localEndpoint -replace '^.*:', '')
+        $address = ($localEndpoint -replace ':\d+$', '')
+        if ($address -notin @('127.0.0.1', '0.0.0.0', '[::1]', '[::]')) {
+            continue
+        }
+        if ($portText -match '^\d+$') {
+            $port = [int]$portText
+            if (-not $ports.Contains($port)) {
+                $ports.Add($port)
+            }
+        }
+    }
+
+    return $ports | Sort-Object | Select-Object -First 64
+}
+
+function Get-LocalProxyCandidates {
+    foreach ($port in (Get-LocalListeningPorts)) {
+        "http://127.0.0.1:$port"
+    }
+}
+
 function Initialize-Proxy {
     if (Proxy-AlreadyConfigured) {
         Write-Info 'Proxy environment variables already set; keeping existing settings'
@@ -152,16 +196,7 @@ function Initialize-Proxy {
     $attempts = 0
     $diagnostics = New-Object 'System.Collections.Generic.List[string]'
 
-    foreach ($candidate in @(
-        'http://127.0.0.1:7890',
-        'http://127.0.0.1:7897',
-        'http://127.0.0.1:8080',
-        'http://127.0.0.1:8888',
-        'http://localhost:7890',
-        'http://localhost:7897',
-        'http://localhost:8080',
-        'http://localhost:8888'
-    )) {
+    foreach ($candidate in (Get-LocalProxyCandidates)) {
         $attempts++
         $result = Test-ProxyCandidate $candidate
         if ($result.Success) {

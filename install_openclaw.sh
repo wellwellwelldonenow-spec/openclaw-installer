@@ -103,7 +103,7 @@ export_proxy_url() {
 probe_proxy_url() {
   local proxy_url="$1"
   local err_file="${2:-/dev/null}"
-  curl -fsSIL --connect-timeout 3 --max-time 8 --proxy "$proxy_url" https://github.com >/dev/null 2>"$err_file"
+  curl -fsSIL --connect-timeout 1 --max-time 4 --proxy "$proxy_url" https://github.com >/dev/null 2>"$err_file"
 }
 
 proxy_host_port() {
@@ -190,6 +190,33 @@ macos_proxy_candidates() {
     }'
 }
 
+local_listening_ports() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { sub(/.*:/, "", $9); if ($9 ~ /^[0-9]+$/) print $9 }' | sort -n -u
+    return 0
+  fi
+
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH 2>/dev/null | awk '{print $4}' | awk '{ sub(/.*:/, "", $1); if ($1 ~ /^[0-9]+$/) print $1 }' | sort -n -u
+    return 0
+  fi
+
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -lnt 2>/dev/null | awk 'NR > 2 { sub(/.*:/, "", $4); if ($4 ~ /^[0-9]+$/) print $4 }' | sort -n -u
+    return 0
+  fi
+}
+
+local_proxy_candidates() {
+  local port
+
+  local_listening_ports | head -n 64 | while IFS= read -r port; do
+    [ -n "$port" ] || continue
+    printf 'http://127.0.0.1:%s\n' "$port"
+    printf 'socks5h://127.0.0.1:%s\n' "$port"
+  done
+}
+
 auto_detect_local_proxy() {
   local candidate
   local attempts=0
@@ -218,20 +245,7 @@ auto_detect_local_proxy() {
     rm -f "$err_file"
   done <<EOF
 $(macos_proxy_candidates)
-http://127.0.0.1:7890
-http://127.0.0.1:7897
-http://127.0.0.1:8080
-http://127.0.0.1:8888
-http://localhost:7890
-http://localhost:7897
-http://localhost:8080
-http://localhost:8888
-socks5h://127.0.0.1:7891
-socks5h://127.0.0.1:1080
-socks5h://127.0.0.1:7898
-socks5h://localhost:7891
-socks5h://localhost:1080
-socks5h://localhost:7898
+$(local_proxy_candidates)
 EOF
 
   if [ "$attempts" -gt 0 ]; then
