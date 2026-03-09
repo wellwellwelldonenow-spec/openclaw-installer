@@ -1283,6 +1283,7 @@ prompt_api_key() {
     return 0
   fi
 
+  printf '请先前往 https://newapi.megabyai.cc/ 注册并获取 NewAPI API Key。\n'
   printf '请输入 NewAPI API Key: '
   read -r -s NEWAPI_API_KEY
   printf '\n'

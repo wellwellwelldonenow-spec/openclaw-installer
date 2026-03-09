@@ -603,6 +603,7 @@ function Ensure-OpenClaw {
 
 function Prompt-ApiKey {
     if ([string]::IsNullOrWhiteSpace($script:ApiKey)) {
+        Write-Info 'Register and get a NewAPI API key at https://newapi.megabyai.cc/'
         $script:ApiKey = Read-Host 'Enter NewAPI API key'
     }
 
