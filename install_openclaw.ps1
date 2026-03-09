@@ -44,6 +44,79 @@ function Set-ProxyEnvironment([string]$ProxyUrl) {
     Write-Info "已自动启用本地代理：$ProxyUrl"
 }
 
+function Get-ProxyEndpoint([string]$ProxyUrl) {
+    try {
+        $uri = [System.Uri]$ProxyUrl
+        return @{
+            Host = $uri.Host
+            Port = $uri.Port
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Test-ProxyPortOpen([string]$ProxyUrl) {
+    $endpoint = Get-ProxyEndpoint $ProxyUrl
+    if ($null -eq $endpoint) {
+        return $false
+    }
+
+    $client = $null
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $async = $client.BeginConnect($endpoint.Host, $endpoint.Port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne(2000, $false)) {
+            return $false
+        }
+
+        $client.EndConnect($async)
+        return $true
+    } catch {
+        return $false
+    } finally {
+        if ($null -ne $client) {
+            $client.Dispose()
+        }
+    }
+}
+
+function Get-ProxyFailureReason([string]$ProxyUrl, [System.Exception]$Exception) {
+    if (-not (Test-ProxyPortOpen $ProxyUrl)) {
+        return '端口不可达，代理程序可能未启动或未监听此端口'
+    }
+
+    $messageParts = @()
+    if ($null -ne $Exception -and -not [string]::IsNullOrWhiteSpace($Exception.Message)) {
+        $messageParts += $Exception.Message
+    }
+    if ($null -ne $Exception -and $null -ne $Exception.InnerException -and -not [string]::IsNullOrWhiteSpace($Exception.InnerException.Message)) {
+        $messageParts += $Exception.InnerException.Message
+    }
+    $message = ($messageParts -join ' ').Trim()
+
+    if ($message -match '407|authentication|proxy authentication|required') {
+        return '代理需要认证，或拒绝了到 GitHub 的连接'
+    }
+    if ($message -match 'SSL|TLS|secure channel') {
+        return '代理端口可连通，但 TLS 握手到 GitHub 失败'
+    }
+    if ($message -match 'timed out|timeout|operation has timed out') {
+        return '代理端口可连通，但访问 GitHub 超时'
+    }
+    if ($message -match 'reset|forcibly closed|unexpected eof|early eof|empty reply') {
+        return '代理端口可连通，但到 GitHub 的连接被中断'
+    }
+    if ($message -match 'name could not be resolved|remote name could not be resolved|dns') {
+        return '代理端口可连通，但 DNS 解析失败'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($message)) {
+        return "代理端口可连通，但访问 GitHub 失败：$message"
+    }
+
+    return '代理端口可连通，但访问 GitHub 失败'
+}
+
 function Test-ProxyCandidate([string]$ProxyUrl) {
     try {
         $params = @{
@@ -56,9 +129,15 @@ function Test-ProxyCandidate([string]$ProxyUrl) {
             $params.UseBasicParsing = $true
         }
         $response = Invoke-WebRequest @params
-        return $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
+        return [pscustomobject]@{
+            Success = ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500)
+            Reason = $null
+        }
     } catch {
-        return $false
+        return [pscustomobject]@{
+            Success = $false
+            Reason = Get-ProxyFailureReason -ProxyUrl $ProxyUrl -Exception $_.Exception
+        }
     }
 }
 
@@ -67,6 +146,9 @@ function Initialize-Proxy {
         Write-Info '检测到已设置代理环境变量，保留现有代理配置'
         return
     }
+
+    $attempts = 0
+    $diagnostics = New-Object 'System.Collections.Generic.List[string]'
 
     foreach ($candidate in @(
         'http://127.0.0.1:7890',
@@ -78,10 +160,23 @@ function Initialize-Proxy {
         'http://localhost:8080',
         'http://localhost:8888'
     )) {
-        if (Test-ProxyCandidate $candidate) {
+        $attempts++
+        $result = Test-ProxyCandidate $candidate
+        if ($result.Success) {
             Set-ProxyEnvironment $candidate
             return
         }
+        if ($diagnostics.Count -lt 4) {
+            $diagnostics.Add(('{0} -> {1}' -f $candidate, $result.Reason))
+        }
+    }
+
+    if ($attempts -gt 0) {
+        Write-WarnMsg "未检测到可用本地代理，已尝试 $attempts 个候选端口"
+        foreach ($item in $diagnostics) {
+            Write-WarnMsg "代理检测：$item"
+        }
+        Write-WarnMsg '如本机代理端口不在默认列表，请先手动设置 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY'
     }
 }
 

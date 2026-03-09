@@ -101,7 +101,71 @@ export_proxy_url() {
 
 probe_proxy_url() {
   local proxy_url="$1"
-  curl -fsSIL --connect-timeout 3 --max-time 8 --proxy "$proxy_url" https://github.com >/dev/null 2>&1
+  local err_file="${2:-/dev/null}"
+  curl -fsSIL --connect-timeout 3 --max-time 8 --proxy "$proxy_url" https://github.com >/dev/null 2>"$err_file"
+}
+
+proxy_host_port() {
+  local proxy_url="$1"
+  local hostport="${proxy_url#*://}"
+  hostport="${hostport%%/*}"
+  printf '%s %s\n' "${hostport%:*}" "${hostport##*:}"
+}
+
+proxy_tcp_reachable() {
+  local host="$1"
+  local port="$2"
+
+  if command -v nc >/dev/null 2>&1; then
+    nc -z -w 2 "$host" "$port" >/dev/null 2>&1
+    return $?
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 3 bash -c "exec 3<>/dev/tcp/$host/$port" >/dev/null 2>&1
+    return $?
+  fi
+
+  bash -c "exec 3<>/dev/tcp/$host/$port" >/dev/null 2>&1
+}
+
+describe_proxy_failure() {
+  local proxy_url="$1"
+  local err_file="$2"
+  local host port stderr_text
+
+  read -r host port <<EOF
+$(proxy_host_port "$proxy_url")
+EOF
+
+  if ! proxy_tcp_reachable "$host" "$port"; then
+    printf '端口不可达，代理程序可能未启动或未监听此端口'
+    return 0
+  fi
+
+  stderr_text="$(tr '\n' ' ' <"$err_file" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
+
+  case "$stderr_text" in
+    *"Could not resolve host"*|*"Couldn't resolve host"*)
+      printf '代理端口可连通，但 DNS 解析失败'
+      ;;
+    *"Received HTTP code 407"*|*"Proxy CONNECT aborted"*|*"authentication"*)
+      printf '代理需要认证，或拒绝了到 GitHub 的连接'
+      ;;
+    *"SSL_ERROR_SYSCALL"*|*"SSL connect error"*|*"TLS"*|*"SSL"*)
+      printf '代理端口可连通，但 TLS 握手到 GitHub 失败'
+      ;;
+    *"Connection reset by peer"*|*"Empty reply from server"*|*"unexpected EOF"*|*"early EOF"*)
+      printf '代理端口可连通，但到 GitHub 的连接被中断'
+      ;;
+    *)
+      if [ -n "$stderr_text" ]; then
+        printf '代理端口可连通，但访问 GitHub 失败：%.160s' "$stderr_text"
+      else
+        printf '代理端口可连通，但访问 GitHub 失败'
+      fi
+      ;;
+  esac
 }
 
 macos_proxy_candidates() {
@@ -127,6 +191,10 @@ macos_proxy_candidates() {
 
 auto_detect_local_proxy() {
   local candidate
+  local attempts=0
+  local err_file
+  local reason
+  local -a diagnostics=()
 
   if proxy_already_configured; then
     log "检测到已设置代理环境变量，保留现有代理配置"
@@ -135,10 +203,18 @@ auto_detect_local_proxy() {
 
   while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue
-    if probe_proxy_url "$candidate"; then
+    attempts=$((attempts + 1))
+    err_file="$(mktemp /tmp/openclaw-proxy-probe.XXXXXX)"
+    if probe_proxy_url "$candidate" "$err_file"; then
+      rm -f "$err_file"
       export_proxy_url "$candidate"
       return 0
     fi
+    if [ "${#diagnostics[@]}" -lt 4 ]; then
+      reason="$(describe_proxy_failure "$candidate" "$err_file")"
+      diagnostics+=("$candidate -> $reason")
+    fi
+    rm -f "$err_file"
   done <<EOF
 $(macos_proxy_candidates)
 http://127.0.0.1:7890
@@ -156,6 +232,14 @@ socks5h://localhost:7891
 socks5h://localhost:1080
 socks5h://localhost:7898
 EOF
+
+  if [ "$attempts" -gt 0 ]; then
+    warn "未检测到可用本地代理，已尝试 ${attempts} 个候选端口"
+    for reason in "${diagnostics[@]}"; do
+      warn "代理检测：$reason"
+    done
+    warn "如本机代理端口不在默认列表，请先手动设置 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY"
+  fi
 }
 
 command_as_text() {
