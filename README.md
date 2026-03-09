@@ -47,6 +47,38 @@ iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-in
 curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh
 ```
 
+## 卸载
+
+- macOS / Linux / WSL2：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh --uninstall
+```
+
+- Windows PowerShell：
+
+```powershell
+$script = Join-Path $env:TEMP 'install_openclaw.ps1'
+iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
+& $script -Uninstall
+```
+
+如果要做“纯净重装”，卸载后再删除用户态数据：
+
+- macOS / Linux / WSL2：
+
+```bash
+rm -rf ~/.openclaw
+```
+
+- Windows PowerShell：
+
+```powershell
+Remove-Item -Recurse -Force "$HOME\.openclaw"
+```
+
+然后重新执行安装命令即可。
+
 ## macOS 说明
 
 - 自动检测 `Xcode Command Line Tools`
