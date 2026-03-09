@@ -8,6 +8,7 @@
 ## 功能
 
 - 自动检测并安装 Node.js 22+
+- Linux/macOS 后台服务强制优先使用系统 Node，不使用 `nvm/fnm/asdf/volta` 的运行时
 - 自动检测 `openclaw` 是否已是 npm 最新版，是则跳过重装
 - 自动安装或升级 `openclaw`
 - 自动以无交互方式完成 `OpenClaw onboard`
@@ -51,7 +52,7 @@ curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-i
 - 自动检测 `Xcode Command Line Tools`
 - 自动安装 `Homebrew`，并固定使用 `Homebrew node@22`
 - 需要系统级安装时会自动触发 `sudo` 验证
-- 自动写入 `~/.openclaw/.env`，把 `PATH` 和 `OPENCLAW_PORT` 固定给后台服务
+- 自动写入 `~/.openclaw/.env`，把 `PATH`、`OPENCLAW_PORT`、`OPENCLAW_CONFIG_PATH` 固定给后台服务
 - 避免 `launchd` 因 `nvm`/shell PATH 导致网关无法拉起
 - 默认在未配置 embedding provider 时关闭 `memorySearch`，避免无意义告警
 

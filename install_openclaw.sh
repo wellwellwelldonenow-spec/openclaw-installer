@@ -95,6 +95,61 @@ macos_node_path_is_service_safe() {
   esac
 }
 
+linux_node_path_is_service_safe() {
+  local node_path
+  node_path="$(command -v node 2>/dev/null || true)"
+  [ -n "$node_path" ] || return 1
+
+  case "$node_path" in
+    /usr/bin/node|/usr/local/bin/node|/bin/node)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+node_path_uses_version_manager() {
+  local node_path
+  node_path="$(command -v node 2>/dev/null || true)"
+
+  case "$node_path" in
+    *"/.nvm/"*|*"/.fnm/"*|*"/.volta/"*|*"/.asdf/"*|*"/shim"*|*"/shims/"*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+openclaw_path_uses_version_manager() {
+  local openclaw_path
+  openclaw_path="$(command -v openclaw 2>/dev/null || true)"
+
+  case "$openclaw_path" in
+    *"/.nvm/"*|*"/.fnm/"*|*"/.volta/"*|*"/.asdf/"*|*"/shim"*|*"/shims/"*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+prefer_system_node_path() {
+  local candidate
+  for candidate in /usr/bin /usr/local/bin /bin; do
+    if [ -x "$candidate/node" ]; then
+      export PATH="$candidate:$PATH"
+      hash -r 2>/dev/null || true
+      return 0
+    fi
+  done
+  return 1
+}
+
 load_nvm() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ -s "$NVM_DIR/nvm.sh" ]; then
@@ -238,32 +293,48 @@ install_node_linux() {
 }
 
 ensure_node() {
-  local major
+  local major needs_install=0
+
   if major="$(node_major_version 2>/dev/null)"; then
     if [ "$major" -ge 22 ]; then
       if [ "$OS" = "macos" ] && ! macos_node_path_is_service_safe; then
         warn "当前 Node.js 路径对 macOS launchd 不友好：$(command -v node)，将切换到 Homebrew node@22"
+        needs_install=1
+      elif [ "$OS" = "linux" ] && ! linux_node_path_is_service_safe; then
+        warn "当前 Node.js 路径对 Linux systemd 不友好：$(command -v node)，将切换到系统 Node.js 22+"
+        needs_install=1
       else
         log "已检测到 Node.js v$(node -v | sed 's/^v//')"
-        return 0
       fi
     else
       warn "当前 Node.js 版本过低：$(node -v)，将升级到 22+"
+      needs_install=1
     fi
   else
     warn "未检测到 Node.js，将自动安装 22+"
+    needs_install=1
   fi
 
-  if [ "$OS" = "macos" ]; then
-    install_node_macos
-  else
-    install_node_linux
+  if [ "$needs_install" -eq 1 ]; then
+    if [ "$OS" = "macos" ]; then
+      install_node_macos
+    else
+      install_node_linux
+      prefer_system_node_path || true
+    fi
+  elif [ "$OS" = "linux" ]; then
+    prefer_system_node_path || true
   fi
 
   command -v node >/dev/null 2>&1 || fail "Node.js 安装后仍不可用"
   major="$(node_major_version)"
   [ "$major" -ge 22 ] || fail "Node.js 安装后版本仍低于 22：$(node -v)"
-  log "Node.js 已就绪：$(node -v)"
+
+  if [ "$OS" = "linux" ] && ! linux_node_path_is_service_safe; then
+    fail "当前仍未切换到系统 Node.js：$(command -v node)"
+  fi
+
+  log "Node.js 已就绪：$(node -v) ($(command -v node))"
 }
 
 ensure_npm_global_bin_in_path() {
@@ -325,12 +396,28 @@ write_service_env() {
       print out;
     }')"
 
+  if [ "$OS" = "linux" ]; then
+    cleaned_path="$(printf '%s' "$cleaned_path" | awk -F: '
+      {
+        out="";
+        for (i=1; i<=NF; i++) {
+          if ($i == "") continue;
+          if ($i ~ /\\/.nvm\\// || $i ~ /\\/.fnm\\// || $i ~ /\\/.volta\\// || $i ~ /\\/.asdf\\// || $i ~ /\\/shims?$/) continue;
+          if (seen[$i]++) continue;
+          out = out (out ? ":" : "") $i;
+        }
+        print out;
+      }')"
+  fi
+
   cat > "$env_file" <<EOF
 PATH=$cleaned_path
 OPENCLAW_PORT=$OPENCLAW_PORT
 OPENCLAW_GATEWAY_PORT=$OPENCLAW_PORT
 OPENCLAW_CONFIG_PATH=$config_path
 OPENCLAW_STATE_DIR=$state_dir
+NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache
+OPENCLAW_NO_RESPAWN=1
 EOF
 
   log "已写入服务环境文件：$env_file"
@@ -429,6 +516,7 @@ diagnose_gateway_failure() {
   openclaw config get gateway.mode >&2 || true
   openclaw config get gateway.bind >&2 || true
   openclaw config get gateway.port >&2 || true
+  printf 'config file: %s\n' "$(resolve_config_path)" >&2
   openclaw gateway status --deep >&2 || openclaw gateway status >&2 || true
   openclaw status --all >&2 || true
   openclaw logs --limit 200 --plain >&2 || true
@@ -485,11 +573,16 @@ install_openclaw() {
   log "安装 OpenClaw"
   ensure_npm_global_bin_in_path
 
-  local installed_version="" latest_version="" prefix="" install_ok=0
+  local installed_version="" latest_version="" prefix="" install_ok=0 force_reinstall=0
   installed_version="$(installed_openclaw_version 2>/dev/null || true)"
   latest_version="$(latest_openclaw_version 2>/dev/null || true)"
 
-  if [ -n "${installed_version:-}" ] && [ -n "${latest_version:-}" ] && [ "${installed_version:-}" = "${latest_version:-}" ]; then
+  if [ "$OS" = "linux" ] && openclaw_path_uses_version_manager; then
+    warn "检测到 openclaw 来自版本管理器路径：$(command -v openclaw)，将改为系统 npm 安装"
+    force_reinstall=1
+  fi
+
+  if [ -n "${installed_version:-}" ] && [ -n "${latest_version:-}" ] && [ "${installed_version:-}" = "${latest_version:-}" ] && [ "$force_reinstall" -eq 0 ]; then
     log "检测到已安装最新版 OpenClaw：${installed_version:-}，跳过安装"
     return 0
   fi
@@ -661,6 +754,12 @@ resolve_config_path() {
   if [ -z "$config_path" ]; then
     config_path="$HOME/.openclaw/openclaw.json"
   fi
+
+  case "$config_path" in
+    ~/*) config_path="$HOME/${config_path#~/}" ;;
+    \$HOME/*) config_path="$HOME/${config_path#\$HOME/}" ;;
+  esac
+
   printf '%s\n' "$config_path"
 }
 

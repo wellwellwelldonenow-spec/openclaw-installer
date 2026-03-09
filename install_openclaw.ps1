@@ -49,36 +49,62 @@ function Get-NodeMajorVersion {
     return [int]$major
 }
 
+function Test-ServiceSafeNodePath {
+    if (-not (Test-Command 'node')) {
+        return $false
+    }
+
+    $nodePath = (Get-Command node).Source
+    return ($nodePath -like 'C:\Program Files\nodejs\node.exe' -or $nodePath -like 'C:\Program Files (x86)\nodejs\node.exe')
+}
+
+function Test-VersionManagerPath($PathValue) {
+    if ([string]::IsNullOrWhiteSpace($PathValue)) { return $false }
+    return $PathValue -match '\nvm\' -or $PathValue -match '\fnm\' -or $PathValue -match '\volta\' -or $PathValue -match '\asdf\' -or $PathValue -match '\shim[s]?\'
+}
+
 function Ensure-Node {
     $major = Get-NodeMajorVersion
-    if ($major -ge 22) {
-        Write-Info "已检测到 Node.js $(node -v)"
-        return
-    }
+    $needsInstall = $false
 
-    if ($major) {
+    if ($major -ge 22) {
+        if (-not (Test-ServiceSafeNodePath)) {
+            Write-WarnMsg "当前 Node.js 路径对 Windows 服务不友好：$((Get-Command node).Source)，将切换到系统 Node.js 22+"
+            $needsInstall = $true
+        } else {
+            Write-Info "已检测到 Node.js $(node -v)"
+        }
+    } elseif ($major) {
         Write-WarnMsg "当前 Node.js 版本过低：$(node -v)，将升级到 22+"
+        $needsInstall = $true
     } else {
         Write-WarnMsg '未检测到 Node.js，将自动安装 22+'
+        $needsInstall = $true
     }
 
-    if (Test-Command 'winget') {
-        Write-Info '使用 winget 安装 Node.js'
-        winget install --exact --id OpenJS.NodeJS --accept-source-agreements --accept-package-agreements | Out-Null
-    } elseif (Test-Command 'choco') {
-        Write-Info '使用 Chocolatey 安装 Node.js'
-        choco install nodejs -y | Out-Null
-    } else {
-        Throw-Fail '未找到 winget 或 choco，无法自动安装 Node.js。请先安装 Node.js 22+。'
+    if ($needsInstall) {
+        if (Test-Command 'winget') {
+            Write-Info '使用 winget 安装 Node.js'
+            winget install --exact --id OpenJS.NodeJS --accept-source-agreements --accept-package-agreements | Out-Null
+        } elseif (Test-Command 'choco') {
+            Write-Info '使用 Chocolatey 安装 Node.js'
+            choco install nodejs -y | Out-Null
+        } else {
+            Throw-Fail '未找到 winget 或 choco，无法自动安装 Node.js。请先安装 Node.js 22+。'
+        }
     }
 
     Refresh-Path
+    $env:Path = 'C:\Program Files\nodejs;C:\Program Files (x86)\nodejs;' + $env:Path
     $major = Get-NodeMajorVersion
     if ($major -lt 22) {
         Throw-Fail "Node.js 安装后版本仍低于 22：$(node -v)"
     }
+    if (-not (Test-ServiceSafeNodePath)) {
+        Throw-Fail "当前仍未切换到系统 Node.js：$((Get-Command node).Source)"
+    }
 
-    Write-Info "Node.js 已就绪：$(node -v)"
+    Write-Info "Node.js 已就绪：$(node -v) ($((Get-Command node).Source))"
 }
 
 function Get-InstalledOpenClawVersion {
@@ -105,8 +131,12 @@ function Ensure-OpenClaw {
     $latestVersion = Get-LatestOpenClawVersion
 
     if ($installedVersion -and $latestVersion -and $installedVersion -eq $latestVersion) {
-        Write-Info "检测到已安装最新版 OpenClaw：$installedVersion，跳过安装"
-        return
+        if (Test-VersionManagerPath (Get-Command openclaw -ErrorAction SilentlyContinue | ForEach-Object Source)) {
+            Write-WarnMsg "检测到 openclaw 来自版本管理器路径：$((Get-Command openclaw).Source)，将改为系统 npm 安装"
+        } else {
+            Write-Info "检测到已安装最新版 OpenClaw：$installedVersion，跳过安装"
+            return
+        }
     }
 
     if ($installedVersion -and $latestVersion) {
@@ -212,12 +242,20 @@ function Write-ServiceEnv {
 
     $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { $configHome }
 
+    $filteredEntries = New-Object System.Collections.Generic.List[string]
+    foreach ($entry in $pathEntries) {
+        if (Test-VersionManagerPath $entry) { continue }
+        if (-not $filteredEntries.Contains($entry)) { $filteredEntries.Add($entry) }
+    }
+
     @(
-        "PATH=$($pathEntries -join ';')",
+        "PATH=$($filteredEntries -join ';')",
         "OPENCLAW_PORT=$GatewayPort",
         "OPENCLAW_GATEWAY_PORT=$GatewayPort",
         "OPENCLAW_CONFIG_PATH=$ConfigPath",
-        "OPENCLAW_STATE_DIR=$stateDir"
+        "OPENCLAW_STATE_DIR=$stateDir",
+        'NODE_COMPILE_CACHE=%TEMP%\openclaw-compile-cache',
+        'OPENCLAW_NO_RESPAWN=1'
     ) | Set-Content -Path $envFile -Encoding UTF8
 
     Write-Info "已写入服务环境文件：$envFile"
@@ -379,6 +417,9 @@ function Get-ConfigPath {
         $lines = & openclaw config file 2>$null
         $last = ($lines | Select-Object -Last 1).Trim()
         if (-not [string]::IsNullOrWhiteSpace($last)) {
+            if ($last.StartsWith('~/') -or $last.StartsWith('~\')) {
+                return (Join-Path $HOME ($last.Substring(2) -replace '/', '\'))
+            }
             return $last
         }
     } catch {}
