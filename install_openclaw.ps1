@@ -331,7 +331,13 @@ function Test-ServiceSafeNodePath {
 
 function Test-VersionManagerPath($PathValue) {
     if ([string]::IsNullOrWhiteSpace($PathValue)) { return $false }
-    return $PathValue -match '\nvm\' -or $PathValue -match '\fnm\' -or $PathValue -match '\volta\' -or $PathValue -match '\asdf\' -or $PathValue -match '\shim[s]?\'
+    $normalized = $PathValue.ToLowerInvariant().Replace('/', '\')
+    return $normalized.Contains('\nvm\') -or
+        $normalized.Contains('\fnm\') -or
+        $normalized.Contains('\volta\') -or
+        $normalized.Contains('\asdf\') -or
+        $normalized.Contains('\shim\') -or
+        $normalized.Contains('\shims\')
 }
 
 function Prefer-SystemNodePath {
