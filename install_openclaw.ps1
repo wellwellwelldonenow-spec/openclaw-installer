@@ -13,6 +13,21 @@ $ProviderId = 'megabyai'
 $BaseUrl = 'https://newapi.megabyai.cc/v1'
 $DefaultModelId = 'gpt-5.3-codex'
 
+function Initialize-ConsoleEncoding {
+    try {
+        $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+        [Console]::InputEncoding = $utf8NoBom
+        [Console]::OutputEncoding = $utf8NoBom
+        $global:OutputEncoding = $utf8NoBom
+    } catch {}
+
+    try {
+        if ($env:OS -eq 'Windows_NT' -and (Get-Command chcp.com -ErrorAction SilentlyContinue)) {
+            & chcp.com 65001 *> $null
+        }
+    } catch {}
+}
+
 function Write-Info($Message) {
     Write-Host "[INFO] $Message" -ForegroundColor Cyan
 }
@@ -824,6 +839,8 @@ function Invoke-Uninstall {
 if (-not ($PSVersionTable -and ($env:OS -eq 'Windows_NT'))) {
     Throw-Fail '当前脚本面向 Windows PowerShell / PowerShell on Windows。macOS/Linux/WSL2 请使用 install_openclaw.sh。'
 }
+
+Initialize-ConsoleEncoding
 
 if ($Uninstall) {
     Invoke-Uninstall
