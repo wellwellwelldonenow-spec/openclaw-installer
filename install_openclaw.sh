@@ -4,6 +4,8 @@ set -Eeuo pipefail
 
 OPENCLAW_PORT_INPUT="${OPENCLAW_PORT:-}"
 OPENCLAW_PORT="${OPENCLAW_PORT:-18789}"
+ACTION="install"
+API_KEY_ARG=""
 PROVIDER_ID="megabyai"
 BASE_URL="https://newapi.megabyai.cc/v1"
 MODEL_ID_DEFAULT="gpt-5.3-codex"
@@ -33,6 +35,42 @@ trap cleanup EXIT
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "缺少命令：$1"
+}
+
+show_usage() {
+  cat <<'EOF'
+用法:
+  bash install_openclaw.sh [NEWAPI_API_KEY]
+  bash install_openclaw.sh --uninstall
+
+选项:
+  --uninstall   删除 OpenClaw、网关服务、状态目录，以及脚本安装的 Node.js 环境
+  -h, --help    显示帮助
+EOF
+}
+
+parse_cli_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --uninstall|uninstall)
+        ACTION="uninstall"
+        ;;
+      -h|--help)
+        show_usage
+        exit 0
+        ;;
+      *)
+        if [ "$ACTION" = "uninstall" ]; then
+          fail "卸载模式不接受额外参数：$1"
+        fi
+        if [ -n "$API_KEY_ARG" ]; then
+          fail "仅支持一个 API Key 位置参数"
+        fi
+        API_KEY_ARG="$1"
+        ;;
+    esac
+    shift
+  done
 }
 
 run_privileged() {
@@ -1117,12 +1155,145 @@ probe_provider() {
   fi
 }
 
+remove_path_if_exists() {
+  [ -e "$1" ] || [ -L "$1" ] || return 0
+  rm -rf "$1"
+}
+
+remove_openclaw_global_installs() {
+  local npm_bin
+
+  for npm_bin in \
+    "$(command -v npm 2>/dev/null || true)" \
+    /usr/bin/npm \
+    /usr/local/bin/npm \
+    "$HOME"/.nvm/versions/node/*/bin/npm
+  do
+    [ -n "$npm_bin" ] || continue
+    [ -x "$npm_bin" ] || continue
+    "$npm_bin" uninstall -g openclaw >/dev/null 2>&1 || true
+  done
+
+  remove_path_if_exists /usr/bin/openclaw
+  remove_path_if_exists /bin/openclaw
+  remove_path_if_exists /usr/local/bin/openclaw
+  remove_path_if_exists /usr/lib/node_modules/openclaw
+  remove_path_if_exists /usr/local/lib/node_modules/openclaw
+
+  for npm_bin in "$HOME"/.nvm/versions/node/*/bin/openclaw "$HOME"/.nvm/versions/node/*/lib/node_modules/openclaw; do
+    [ -e "$npm_bin" ] || continue
+    remove_path_if_exists "$npm_bin"
+  done
+}
+
+remove_gateway_service() {
+  if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl --user stop openclaw-gateway.service >/dev/null 2>&1 || true
+    systemctl --user disable openclaw-gateway.service >/dev/null 2>&1 || true
+    remove_path_if_exists "$HOME/.config/systemd/user/openclaw-gateway.service"
+    remove_path_if_exists "$HOME/.config/systemd/user/openclaw-gateway.service.bak"
+    remove_path_if_exists "$HOME/.config/systemd/user/default.target.wants/openclaw-gateway.service"
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  if [ "$OS" = "macos" ] && command -v launchctl >/dev/null 2>&1; then
+    local label plist_path gui_domain
+    label="$(resolve_gateway_launch_agent_label)"
+    plist_path="$HOME/Library/LaunchAgents/${label}.plist"
+    gui_domain="gui/$(id -u)"
+    launchctl bootout "$gui_domain" "$plist_path" >/dev/null 2>&1 || true
+    launchctl unload "$plist_path" >/dev/null 2>&1 || true
+    remove_path_if_exists "$plist_path"
+  fi
+}
+
+remove_openclaw_state() {
+  remove_path_if_exists "$HOME/.openclaw"
+
+  for path in \
+    /tmp/openclaw \
+    /tmp/openclaw-0 \
+    /tmp/openclaw-home-orig \
+    /tmp/openclaw-home-fixed \
+    /tmp/openclaw-home-fixed-2 \
+    /tmp/openclaw-home-fixed-3 \
+    /tmp/openclaw-home-fixed-4 \
+    /tmp/openclaw_gateway_foreground.log
+  do
+    remove_path_if_exists "$path"
+  done
+
+  for path in /tmp/openclaw_gateway_status.*; do
+    [ -e "$path" ] || continue
+    remove_path_if_exists "$path"
+  done
+}
+
+remove_script_installed_node_linux() {
+  local nodejs_version
+
+  if command -v dpkg-query >/dev/null 2>&1; then
+    nodejs_version="$(dpkg-query -W -f='${Version}' nodejs 2>/dev/null || true)"
+    case "$nodejs_version" in
+      *nodesource*)
+        log "卸载脚本安装的 Node.js 包：$nodejs_version"
+        run_privileged apt-get purge -y nodejs || true
+        run_privileged apt-get autoremove -y || true
+        ;;
+    esac
+  fi
+
+  if [ -f /etc/apt/sources.list.d/nodesource.sources ]; then
+    run_privileged rm -f /etc/apt/sources.list.d/nodesource.sources
+  fi
+
+  if [ -f /etc/apt/keyrings/nodesource.gpg ]; then
+    run_privileged rm -f /etc/apt/keyrings/nodesource.gpg
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    run_privileged apt-get update || true
+  fi
+}
+
+remove_script_installed_node_macos() {
+  if command -v brew >/dev/null 2>&1 && brew list node@22 >/dev/null 2>&1; then
+    log "卸载脚本安装的 Homebrew node@22"
+    brew uninstall node@22 >/dev/null 2>&1 || true
+  fi
+}
+
+uninstall_openclaw() {
+  detect_platform
+  log "开始卸载 OpenClaw 和脚本生成的环境"
+
+  remove_gateway_service
+  remove_openclaw_global_installs
+  remove_openclaw_state
+
+  if [ "$OS" = "linux" ]; then
+    remove_script_installed_node_linux
+  elif [ "$OS" = "macos" ]; then
+    remove_script_installed_node_macos
+  fi
+
+  log "卸载完成"
+}
+
 main() {
   local config_path
 
+  parse_cli_args "$@"
+
+  if [ "$ACTION" = "uninstall" ]; then
+    uninstall_openclaw
+    return 0
+  fi
+
   detect_platform
   need_cmd curl
-  prompt_api_key "${1:-}"
+  prompt_api_key "$API_KEY_ARG"
   prompt_model
   ensure_node
   choose_gateway_port

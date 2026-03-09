@@ -3,7 +3,8 @@ param(
     [string]$ApiKey = $env:NEWAPI_API_KEY,
     [string]$ModelId = $env:OPENCLAW_MODEL_ID,
     [int]$GatewayPort = $(if ($env:OPENCLAW_PORT) { [int]$env:OPENCLAW_PORT } else { 18789 }),
-    [switch]$SkipUpstreamCheck
+    [switch]$SkipUpstreamCheck,
+    [switch]$Uninstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -661,8 +662,94 @@ function Probe-Provider {
     }
 }
 
+function Remove-PathSafe([string]$PathValue) {
+    if ([string]::IsNullOrWhiteSpace($PathValue)) { return }
+    if (Test-Path $PathValue) {
+        Remove-Item -Path $PathValue -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Remove-OpenClawPackage {
+    $npmCandidates = New-Object System.Collections.Generic.List[string]
+
+    if (Test-Command 'npm') {
+        $npmCandidates.Add((Get-Command npm).Source)
+    }
+
+    foreach ($candidate in @(
+        'C:\Program Files\nodejs\npm.cmd',
+        'C:\Program Files (x86)\nodejs\npm.cmd'
+    )) {
+        if ((Test-Path $candidate) -and (-not $npmCandidates.Contains($candidate))) {
+            $npmCandidates.Add($candidate)
+        }
+    }
+
+    foreach ($npmBin in $npmCandidates) {
+        & $npmBin uninstall -g openclaw *> $null
+    }
+
+    foreach ($pathValue in @(
+        'C:\Program Files\nodejs\openclaw.cmd',
+        'C:\Program Files\nodejs\openclaw',
+        (Join-Path $HOME '.npm-global\openclaw.cmd'),
+        (Join-Path $HOME '.npm-global\openclaw')
+    )) {
+        Remove-PathSafe $pathValue
+    }
+}
+
+function Remove-GatewayTask {
+    foreach ($taskName in @('OpenClaw Gateway')) {
+        if (Test-Command 'schtasks') {
+            schtasks /Delete /TN $taskName /F *> $null
+        }
+    }
+
+    Remove-PathSafe (Join-Path $HOME '.openclaw\gateway.cmd')
+}
+
+function Remove-OpenClawState {
+    Remove-PathSafe (Join-Path $HOME '.openclaw')
+
+    foreach ($pattern in @(
+        (Join-Path $env:TEMP 'openclaw'),
+        (Join-Path $env:TEMP 'openclaw-*'),
+        (Join-Path $env:TEMP 'openclaw_home_*'),
+        (Join-Path $env:TEMP 'openclaw_gateway_*')
+    )) {
+        Remove-Item -Path $pattern -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Remove-ScriptInstalledNode {
+    if (-not (Test-ServiceSafeNodePath)) {
+        return
+    }
+
+    if (Test-Command 'winget') {
+        winget uninstall --exact --id OpenJS.NodeJS --accept-source-agreements *> $null
+    } elseif (Test-Command 'choco') {
+        choco uninstall nodejs -y *> $null
+    }
+}
+
+function Invoke-Uninstall {
+    Write-Info '开始卸载 OpenClaw 和脚本生成的环境'
+    Remove-GatewayTask
+    Remove-OpenClawPackage
+    Remove-OpenClawState
+    Remove-ScriptInstalledNode
+    Write-Info '卸载完成'
+}
+
 if (-not ($PSVersionTable -and ($env:OS -eq 'Windows_NT'))) {
     Throw-Fail '当前脚本面向 Windows PowerShell / PowerShell on Windows。macOS/Linux/WSL2 请使用 install_openclaw.sh。'
+}
+
+if ($Uninstall) {
+    Invoke-Uninstall
+    exit 0
 }
 
 Prompt-ApiKey
