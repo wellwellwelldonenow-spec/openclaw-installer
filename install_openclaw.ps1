@@ -42,7 +42,7 @@ function Set-ProxyEnvironment([string]$ProxyUrl) {
     foreach ($name in @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy')) {
         Set-Item -Path "env:$name" -Value $ProxyUrl
     }
-    Write-Info "已自动启用本地代理：$ProxyUrl"
+    Write-Info "Enabled local proxy automatically: $ProxyUrl"
 }
 
 function Get-ProxyEndpoint([string]$ProxyUrl) {
@@ -84,7 +84,7 @@ function Test-ProxyPortOpen([string]$ProxyUrl) {
 
 function Get-ProxyFailureReason([string]$ProxyUrl, [System.Exception]$Exception) {
     if (-not (Test-ProxyPortOpen $ProxyUrl)) {
-        return '端口不可达，代理程序可能未启动或未监听此端口'
+        return 'Port unreachable; proxy may not be running or listening on this port'
     }
 
     $messageParts = @()
@@ -97,25 +97,25 @@ function Get-ProxyFailureReason([string]$ProxyUrl, [System.Exception]$Exception)
     $message = ($messageParts -join ' ').Trim()
 
     if ($message -match '407|authentication|proxy authentication|required') {
-        return '代理需要认证，或拒绝了到 GitHub 的连接'
+        return 'Proxy requires authentication or rejected the GitHub connection'
     }
     if ($message -match 'SSL|TLS|secure channel') {
-        return '代理端口可连通，但 TLS 握手到 GitHub 失败'
+        return 'Proxy port is reachable, but TLS handshake to GitHub failed'
     }
     if ($message -match 'timed out|timeout|operation has timed out') {
-        return '代理端口可连通，但访问 GitHub 超时'
+        return 'Proxy port is reachable, but GitHub request timed out'
     }
     if ($message -match 'reset|forcibly closed|unexpected eof|early eof|empty reply') {
-        return '代理端口可连通，但到 GitHub 的连接被中断'
+        return 'Proxy port is reachable, but the GitHub connection was interrupted'
     }
     if ($message -match 'name could not be resolved|remote name could not be resolved|dns') {
-        return '代理端口可连通，但 DNS 解析失败'
+        return 'Proxy port is reachable, but DNS resolution failed'
     }
     if (-not [string]::IsNullOrWhiteSpace($message)) {
-        return "代理端口可连通，但访问 GitHub 失败：$message"
+        return "Proxy port is reachable, but GitHub request failed: $message"
     }
 
-    return '代理端口可连通，但访问 GitHub 失败'
+    return 'Proxy port is reachable, but GitHub request failed'
 }
 
 function Test-ProxyCandidate([string]$ProxyUrl) {
@@ -144,7 +144,7 @@ function Test-ProxyCandidate([string]$ProxyUrl) {
 
 function Initialize-Proxy {
     if (Proxy-AlreadyConfigured) {
-        Write-Info '检测到已设置代理环境变量，保留现有代理配置'
+        Write-Info 'Proxy environment variables already set; keeping existing settings'
         return
     }
 
@@ -173,11 +173,11 @@ function Initialize-Proxy {
     }
 
     if ($attempts -gt 0) {
-        Write-WarnMsg "未检测到可用本地代理，已尝试 $attempts 个候选端口"
+        Write-WarnMsg "No working local proxy detected after trying $attempts candidate ports"
         foreach ($item in $diagnostics) {
-            Write-WarnMsg "代理检测：$item"
+            Write-WarnMsg "Proxy probe: $item"
         }
-        Write-WarnMsg '如本机代理端口不在默认列表，请先手动设置 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY'
+        Write-WarnMsg 'If your proxy uses a different port, set HTTP_PROXY/HTTPS_PROXY/ALL_PROXY manually'
     }
 }
 
@@ -253,7 +253,7 @@ function Invoke-Npm {
 
     $npmCommand = Get-NpmCommand
     if ([string]::IsNullOrWhiteSpace($npmCommand)) {
-        Throw-Fail '未找到 npm.cmd，可执行 Node.js 可能未正确安装'
+        Throw-Fail 'npm.cmd not found; Node.js may not be installed correctly'
     }
 
     & $npmCommand @Arguments
@@ -267,7 +267,7 @@ function Invoke-OpenClaw {
 
     $openclawCommand = Get-OpenClawCommand
     if ([string]::IsNullOrWhiteSpace($openclawCommand)) {
-        Throw-Fail '未找到 openclaw.cmd，请先完成 OpenClaw 安装'
+        Throw-Fail 'openclaw.cmd not found; complete OpenClaw installation first'
     }
 
     & $openclawCommand @Arguments
@@ -344,7 +344,7 @@ function Prefer-SystemNodePath {
     Refresh-Path
     Add-PathEntries (Get-SystemNodeDirectories)
     if ((Get-NodeMajorVersion) -ge 22 -and (Test-ServiceSafeNodePath)) {
-        Write-Info "已切换到系统 Node.js：$(node -v) ($((Get-Command node).Source))"
+        Write-Info "Switched to system Node.js: $(node -v) ($((Get-Command node).Source))"
         return $true
     }
 
@@ -359,28 +359,28 @@ function Ensure-Node {
 
     if ($major -ge 22) {
         if (-not (Test-ServiceSafeNodePath)) {
-            Write-WarnMsg "当前 Node.js 路径对 Windows 服务不友好：$((Get-Command node).Source)，将切换到系统 Node.js 22+"
+            Write-WarnMsg "Current Node.js path is not service-safe on Windows: $((Get-Command node).Source). Switching to system Node.js 22+"
             $needsInstall = $true
         } else {
-            Write-Info "已检测到 Node.js $(node -v)"
+            Write-Info "Detected Node.js $(node -v)"
         }
     } elseif ($major) {
-        Write-WarnMsg "当前 Node.js 版本过低：$(node -v)，将升级到 22+"
+        Write-WarnMsg "Current Node.js version is too old: $(node -v). Upgrading to 22+"
         $needsInstall = $true
     } else {
-        Write-WarnMsg '未检测到 Node.js，将自动安装 22+'
+        Write-WarnMsg 'Node.js not found; installing 22+ automatically'
         $needsInstall = $true
     }
 
     if ($needsInstall) {
         if (Test-Command 'winget') {
-            Write-Info '使用 winget 安装 Node.js'
+            Write-Info 'Installing Node.js with winget'
             winget install --exact --id OpenJS.NodeJS --accept-source-agreements --accept-package-agreements | Out-Null
         } elseif (Test-Command 'choco') {
-            Write-Info '使用 Chocolatey 安装 Node.js'
+            Write-Info 'Installing Node.js with Chocolatey'
             choco install nodejs -y | Out-Null
         } else {
-            Throw-Fail '未找到 winget 或 choco，无法自动安装 Node.js。请先安装 Node.js 22+。'
+            Throw-Fail 'winget and choco were not found. Install Node.js 22+ manually first.'
         }
     }
 
@@ -388,13 +388,13 @@ function Ensure-Node {
     Add-PathEntries (Get-SystemNodeDirectories)
     $major = Get-NodeMajorVersion
     if ($major -lt 22) {
-        Throw-Fail "Node.js 安装后版本仍低于 22：$(node -v)"
+        Throw-Fail "Node.js version is still below 22 after install: $(node -v)"
     }
     if (-not (Test-ServiceSafeNodePath)) {
-        Throw-Fail "当前仍未切换到系统 Node.js：$((Get-Command node).Source)"
+        Throw-Fail "Still not using a system Node.js path: $((Get-Command node).Source)"
     }
 
-    Write-Info "Node.js 已就绪：$(node -v) ($((Get-Command node).Source))"
+    Write-Info "Node.js ready: $(node -v) ($((Get-Command node).Source))"
 }
 
 function Get-InstalledOpenClawVersion {
@@ -414,7 +414,7 @@ function Get-LatestOpenClawVersion {
 }
 
 function Ensure-OpenClaw {
-    Write-Info '安装 OpenClaw'
+    Write-Info 'Installing OpenClaw'
     Refresh-Path
 
     $installedVersion = Get-InstalledOpenClawVersion
@@ -423,38 +423,38 @@ function Ensure-OpenClaw {
     if ($installedVersion -and $latestVersion -and $installedVersion -eq $latestVersion) {
         $existingOpenClaw = Get-OpenClawCommand
         if (Test-VersionManagerPath $existingOpenClaw) {
-            Write-WarnMsg "检测到 openclaw 来自版本管理器路径：$existingOpenClaw，将改为系统 npm 安装"
+            Write-WarnMsg "Detected openclaw under a version-manager path: $existingOpenClaw. Reinstalling with system npm"
         } else {
-            Write-Info "检测到已安装最新版 OpenClaw：$installedVersion，跳过安装"
+            Write-Info "Latest OpenClaw already installed: $installedVersion. Skipping install"
             return
         }
     }
 
     if ($installedVersion -and $latestVersion) {
-        Write-Info "检测到本地 OpenClaw：$installedVersion，npm 最新版：$latestVersion，将执行升级"
+        Write-Info "Local OpenClaw: $installedVersion; npm latest: $latestVersion. Upgrading"
     } elseif ($installedVersion) {
-        Write-WarnMsg "已安装 OpenClaw：$installedVersion，但未能确认 npm 最新版本，将尝试升级"
+        Write-WarnMsg "OpenClaw $installedVersion is installed, but npm latest could not be confirmed. Trying upgrade"
     } else {
-        Write-Info '未检测到 OpenClaw，将执行安装'
+        Write-Info 'OpenClaw not found; installing'
     }
 
     Invoke-Npm install -g openclaw@latest
     Refresh-Path
 
     if ([string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
-        Throw-Fail 'OpenClaw 安装后未找到命令'
+        Throw-Fail 'OpenClaw command not found after installation'
     }
 
-    Write-Info "OpenClaw 版本：$(((Invoke-OpenClaw --version) | Select-Object -Last 1).Trim())"
+    Write-Info "OpenClaw version: $(((Invoke-OpenClaw --version) | Select-Object -Last 1).Trim())"
 }
 
 function Prompt-ApiKey {
     if ([string]::IsNullOrWhiteSpace($script:ApiKey)) {
-        $script:ApiKey = Read-Host '请输入 NewAPI API Key'
+        $script:ApiKey = Read-Host 'Enter NewAPI API key'
     }
 
     if ([string]::IsNullOrWhiteSpace($script:ApiKey)) {
-        Throw-Fail 'API Key 不能为空'
+        Throw-Fail 'API key cannot be empty'
     }
 
     $env:NEWAPI_API_KEY = $script:ApiKey
@@ -462,7 +462,7 @@ function Prompt-ApiKey {
 
 function Prompt-Model {
     if (-not [string]::IsNullOrWhiteSpace($script:ModelId)) {
-        Write-Info "使用环境变量指定模型：$script:ModelId"
+        Write-Info "Using model from environment: $script:ModelId"
         return
     }
 
@@ -475,18 +475,18 @@ function Prompt-Model {
 
     if ($nonInteractive) {
         $script:ModelId = $DefaultModelId
-        Write-Info "非交互环境，使用默认模型：$script:ModelId"
+        Write-Info "Non-interactive environment; using default model: $script:ModelId"
         return
     }
 
-    $inputModel = Read-Host "请输入模型 ID（默认 $DefaultModelId）"
+    $inputModel = Read-Host "Enter model ID (default $DefaultModelId)"
     if ([string]::IsNullOrWhiteSpace($inputModel)) {
         $script:ModelId = $DefaultModelId
     } else {
         $script:ModelId = $inputModel.Trim()
     }
 
-    Write-Info "使用模型：$script:ModelId"
+    Write-Info "Using model: $script:ModelId"
 }
 
 function Test-PortListening([int]$Port) {
@@ -537,22 +537,22 @@ function Choose-GatewayPort {
             if ($existingPort -and $candidate -eq $existingPort -and (Test-GatewayHealth)) {
                 $script:GatewayPort = $candidate
                 $env:OPENCLAW_PORT = [string]$candidate
-                Write-Info "检测到现有 OpenClaw 网关正在使用端口：$candidate，复用该端口"
+                Write-Info "Detected a healthy OpenClaw gateway on port $candidate. Reusing it"
                 return
             }
 
-            Write-WarnMsg "端口 $candidate 已被占用，尝试下一个端口"
+            Write-WarnMsg "Port $candidate is already in use; trying next port"
             $candidate++
             continue
         }
 
         $script:GatewayPort = $candidate
         $env:OPENCLAW_PORT = [string]$candidate
-        Write-Info "将使用网关端口：$candidate"
+        Write-Info "Using gateway port: $candidate"
         return
     }
 
-    Throw-Fail '未找到可用网关端口，请手动设置 OPENCLAW_PORT'
+    Throw-Fail 'No available gateway port found. Set OPENCLAW_PORT manually'
 }
 
 function Get-ServicePath {
@@ -609,7 +609,7 @@ function Write-ServiceEnv {
         'OPENCLAW_NO_RESPAWN=1'
     ) | Set-Content -Path $envFile -Encoding UTF8
 
-    Write-Info "已写入服务环境文件：$envFile"
+    Write-Info "Wrote service environment file: $envFile"
 }
 
 function Invoke-OpenClawWithServiceEnv {
@@ -662,7 +662,7 @@ function Test-UpstreamWithPowerShell {
         $response = Invoke-WebRequest @params
         return $response.StatusCode -eq 200
     } catch {
-        Write-WarnMsg "PowerShell 校验失败：$($_.Exception.Message)"
+        Write-WarnMsg "PowerShell upstream check failed: $($_.Exception.Message)"
         return $false
     }
 }
@@ -686,10 +686,10 @@ const apiKey = process.argv[2];
 }
 
 function Verify-UpstreamApi {
-    Write-Info '验证上游 NewAPI 接口'
+    Write-Info 'Verifying upstream NewAPI endpoint'
 
     if ($SkipUpstreamCheck) {
-        Write-WarnMsg '已跳过上游接口校验（-SkipUpstreamCheck）'
+        Write-WarnMsg 'Skipped upstream check (-SkipUpstreamCheck)'
         return
     }
 
@@ -697,12 +697,12 @@ function Verify-UpstreamApi {
         return
     }
 
-    Write-WarnMsg 'PowerShell 探测失败，改用 Node.js TLS 栈重试'
+    Write-WarnMsg 'PowerShell probe failed; retrying with Node.js TLS stack'
     if (Test-UpstreamWithNode) {
         return
     }
 
-    Throw-Fail 'API Key 无效、上游接口不可用，或本机网络/TLS 连接存在问题'
+    Throw-Fail 'API key invalid, upstream unavailable, or local network/TLS connectivity is broken'
 }
 
 function Test-GatewayHealth {
@@ -741,7 +741,7 @@ function Start-GatewayWithoutService {
 
     $openclawPath = Get-OpenClawCommand
     if ([string]::IsNullOrWhiteSpace($openclawPath)) {
-        Throw-Fail '未找到 openclaw.cmd，无法在无服务模式下启动网关'
+        Throw-Fail 'openclaw.cmd not found; cannot start gateway in no-service mode'
     }
 
     $stdoutLog = Join-Path $env:TEMP 'openclaw-gateway-stdout.log'
@@ -765,7 +765,7 @@ function Start-GatewayWithoutService {
         $env:NODE_COMPILE_CACHE = Join-Path $env:TEMP 'openclaw-compile-cache'
         $env:OPENCLAW_NO_RESPAWN = '1'
 
-        Write-WarnMsg '计划任务安装失败，改为当前用户无服务模式启动网关'
+        Write-WarnMsg 'Scheduled Task install failed; falling back to no-service gateway startup under the current user'
         Start-Process -FilePath $openclawPath -ArgumentList @('gateway', 'run', '--port', [string]$GatewayPort, '--bind', 'loopback') -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog | Out-Null
         Start-Sleep -Seconds 5
     } finally {
@@ -790,7 +790,7 @@ function Start-GatewayWithoutService {
 
 function Invoke-GatewayForegroundProbe {
     $probeLog = Join-Path $env:TEMP 'openclaw-gateway-foreground.log'
-    Write-WarnMsg '后台服务仍未就绪，尝试前台启动一次以抓取首个报错'
+    Write-WarnMsg 'Background gateway is still not healthy; trying one foreground run to capture the first error'
 
     if (Test-Path $probeLog) {
         Remove-Item $probeLog -Force -ErrorAction SilentlyContinue
@@ -814,7 +814,7 @@ function Invoke-GatewayForegroundProbe {
 }
 
 function Show-GatewayDiagnostics {
-    Write-WarnMsg '开始采集网关诊断信息'
+    Write-WarnMsg 'Collecting gateway diagnostics'
 
     try { Invoke-OpenClaw config get gateway.mode } catch {}
     try { Invoke-OpenClaw config get gateway.bind } catch {}
@@ -835,7 +835,7 @@ function Repair-GatewayService {
     $configPath = Get-ConfigPath
     $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { Join-Path $HOME '.openclaw' }
 
-    Write-WarnMsg '网关健康检查失败，尝试执行 openclaw doctor --fix 修复服务'
+    Write-WarnMsg 'Gateway health check failed; trying openclaw doctor --fix'
     try { Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir doctor --fix } catch { try { Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir doctor --yes } catch {} }
     try {
         Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
@@ -858,7 +858,7 @@ function Install-AndStartGateway {
     $configPath = Get-ConfigPath
     $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { Join-Path $HOME '.openclaw' }
 
-    Write-Info '安装并启动网关'
+    Write-Info 'Installing and starting gateway'
     $serviceInstallOk = $true
     try {
         Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
@@ -887,7 +887,7 @@ function Install-AndStartGateway {
 
     if (-not (Test-GatewayHealth)) {
         Show-GatewayDiagnostics
-        Throw-Fail '网关仍未就绪，请优先执行 openclaw gateway status --deep 和 openclaw logs --follow'
+        Throw-Fail 'Gateway is still not ready. Run openclaw gateway status --deep and openclaw logs --follow first'
     }
 
     try { Invoke-OpenClaw gateway status } catch {}
@@ -919,13 +919,13 @@ function Ensure-OpenClawBootstrap {
     $hasConfig = (Test-Path $configHome) -and ((Get-ChildItem -Path $configHome -File -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)
 
     if ($hasConfig) {
-        Write-Info '检测到已有 OpenClaw 配置，跳过 onboard'
+        Write-Info 'Existing OpenClaw config detected; skipping onboard'
     } else {
-        Write-Info '无交互初始化 OpenClaw'
+        Write-Info 'Running non-interactive OpenClaw bootstrap'
         try {
             Invoke-OpenClaw onboard --non-interactive --accept-risk --mode local --auth-choice custom-api-key --custom-provider-id $ProviderId --custom-compatibility openai --custom-base-url $BaseUrl --custom-model-id $ModelId --custom-api-key $ApiKey --gateway-port $GatewayPort --gateway-bind loopback --skip-daemon --skip-health --skip-skills
         } catch {
-            Write-WarnMsg '无交互 onboard 失败，回退到最小初始化流程'
+            Write-WarnMsg 'Non-interactive onboard failed; falling back to minimal initialization'
             New-Item -ItemType Directory -Path $configHome -Force | Out-Null
         }
     }
@@ -940,7 +940,7 @@ function Write-OpenClawConfig {
         Copy-Item $configPath "$configPath.bak.$([DateTimeOffset]::Now.ToUnixTimeSeconds())" -Force
     }
 
-    Write-Info "写入 OpenClaw 配置：$configPath"
+    Write-Info "Writing OpenClaw config: $configPath"
 
     $nodeScript = @'
 const fs = require('fs');
@@ -1051,25 +1051,25 @@ function Open-Dashboard([string]$ConfigPath) {
         Start-Process $dashboardUrl | Out-Null
     } catch {}
 
-    Write-Info "Control UI：$dashboardUrl"
+    Write-Info "Control UI: $dashboardUrl"
     $token = Get-GatewayToken $ConfigPath
     if (-not [string]::IsNullOrWhiteSpace($token)) {
-        Write-Info "Gateway token：$token"
-        Write-WarnMsg '若 UI 提示 unauthorized，请在 Control UI settings 中粘贴上面的 gateway token'
+        Write-Info "Gateway token: $token"
+        Write-WarnMsg 'If the UI shows unauthorized, paste the gateway token above into Control UI settings'
     }
 }
 
 function Validate-OpenClaw {
-    Write-Info '校验 OpenClaw 配置'
+    Write-Info 'Validating OpenClaw config'
     Invoke-OpenClaw config validate
 }
 
 function Probe-Provider {
-    Write-Info '探测模型可用性'
+    Write-Info 'Probing provider/model availability'
     try {
         Invoke-OpenClaw models status --probe --probe-provider $ProviderId --json
     } catch {
-        Write-WarnMsg '模型探测失败，请检查网络、API Key 或上游模型权限'
+        Write-WarnMsg 'Model probe failed. Check network, API key, or upstream model permissions'
     }
 }
 
@@ -1147,16 +1147,16 @@ function Remove-ScriptInstalledNode {
 }
 
 function Invoke-Uninstall {
-    Write-Info '开始卸载 OpenClaw 和脚本生成的环境'
+    Write-Info 'Removing OpenClaw and script-created environment'
     Remove-GatewayTask
     Remove-OpenClawPackage
     Remove-OpenClawState
     Remove-ScriptInstalledNode
-    Write-Info '卸载完成'
+    Write-Info 'Uninstall complete'
 }
 
 if (-not ($PSVersionTable -and ($env:OS -eq 'Windows_NT'))) {
-    Throw-Fail '当前脚本面向 Windows PowerShell / PowerShell on Windows。macOS/Linux/WSL2 请使用 install_openclaw.sh。'
+    Throw-Fail 'This script targets Windows PowerShell / PowerShell on Windows. Use install_openclaw.sh for macOS/Linux/WSL2.'
 }
 
 Initialize-ConsoleEncoding
@@ -1183,15 +1183,15 @@ Probe-Provider
 Open-Dashboard -ConfigPath $configPath
 
 Write-Host ''
-Write-Host '安装完成。' -ForegroundColor Green
-Write-Host "- OpenClaw 已安装并初始化"
-Write-Host "- 网关端口：$GatewayPort"
-Write-Host "- Provider：$ProviderId"
-Write-Host "- Model：$ModelId"
-Write-Host "- Browser tool：$(if ($EnableBrowserTool) { 'enabled' } else { 'disabled (set OPENCLAW_ENABLE_BROWSER_TOOL=0 to keep it off)' })"
-Write-Host "- Dashboard：http://127.0.0.1:$GatewayPort/"
-Write-Host "- Gateway token：$(if ($token = Get-GatewayToken $configPath) { $token } else { '未读取到，请执行 openclaw config get gateway.auth.token' })"
+Write-Host 'Install complete.' -ForegroundColor Green
+Write-Host '- OpenClaw installed and initialized'
+Write-Host "- Gateway port: $GatewayPort"
+Write-Host "- Provider: $ProviderId"
+Write-Host "- Model: $ModelId"
+Write-Host "- Browser tool: $(if ($EnableBrowserTool) { 'enabled' } else { 'disabled (set OPENCLAW_ENABLE_BROWSER_TOOL=0 to keep it off)' })"
+Write-Host "- Dashboard: http://127.0.0.1:$GatewayPort/"
+Write-Host "- Gateway token: $(if ($token = Get-GatewayToken $configPath) { $token } else { 'not read; run openclaw config get gateway.auth.token' })"
 Write-Host ''
-Write-Host '可继续手动测试：'
+Write-Host 'Manual tests:'
 Write-Host '  openclaw gateway status --deep'
 Write-Host '  openclaw logs --follow'
