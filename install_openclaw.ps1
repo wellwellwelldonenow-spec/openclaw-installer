@@ -29,6 +29,82 @@ function Test-Command($Name) {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Resolve-CliShim {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BaseName,
+        [string[]]$PreferredPaths = @()
+    )
+
+    foreach ($candidate in $PreferredPaths) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    foreach ($commandName in @("$BaseName.cmd", "$BaseName.exe", $BaseName)) {
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue
+        if ($null -eq $command) { continue }
+
+        $source = $command.Source
+        if ([string]::IsNullOrWhiteSpace($source)) { continue }
+
+        if ($source.EndsWith('.ps1', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $cmdShim = [System.IO.Path]::ChangeExtension($source, '.cmd')
+            if (Test-Path $cmdShim) {
+                return $cmdShim
+            }
+        }
+
+        return $source
+    }
+
+    return $null
+}
+
+function Get-NpmCommand {
+    return Resolve-CliShim -BaseName 'npm' -PreferredPaths @(
+        'C:\Program Files\nodejs\npm.cmd',
+        'C:\Program Files (x86)\nodejs\npm.cmd'
+    )
+}
+
+function Get-OpenClawCommand {
+    return Resolve-CliShim -BaseName 'openclaw' -PreferredPaths @(
+        'C:\Program Files\nodejs\openclaw.cmd',
+        'C:\Program Files (x86)\nodejs\openclaw.cmd',
+        (Join-Path $HOME '.npm-global\openclaw.cmd')
+    )
+}
+
+function Invoke-Npm {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $npmCommand = Get-NpmCommand
+    if ([string]::IsNullOrWhiteSpace($npmCommand)) {
+        Throw-Fail '未找到 npm.cmd，可执行 Node.js 可能未正确安装'
+    }
+
+    & $npmCommand @Arguments
+}
+
+function Invoke-OpenClaw {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $openclawCommand = Get-OpenClawCommand
+    if ([string]::IsNullOrWhiteSpace($openclawCommand)) {
+        Throw-Fail '未找到 openclaw.cmd，请先完成 OpenClaw 安装'
+    }
+
+    & $openclawCommand @Arguments
+}
+
 function Refresh-Path {
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -148,19 +224,19 @@ function Ensure-Node {
 }
 
 function Get-InstalledOpenClawVersion {
-    if (-not (Test-Command 'openclaw')) {
+    if ([string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
         return ''
     }
 
-    return ((& openclaw --version 2>$null) | Select-Object -Last 1).Trim()
+    return ((Invoke-OpenClaw --version 2>$null) | Select-Object -Last 1).Trim()
 }
 
 function Get-LatestOpenClawVersion {
-    if (-not (Test-Command 'npm')) {
+    if ([string]::IsNullOrWhiteSpace((Get-NpmCommand))) {
         return ''
     }
 
-    return ((& npm view openclaw version --silent 2>$null) | Select-Object -Last 1).Trim()
+    return ((Invoke-Npm view openclaw version --silent 2>$null) | Select-Object -Last 1).Trim()
 }
 
 function Ensure-OpenClaw {
@@ -171,8 +247,9 @@ function Ensure-OpenClaw {
     $latestVersion = Get-LatestOpenClawVersion
 
     if ($installedVersion -and $latestVersion -and $installedVersion -eq $latestVersion) {
-        if (Test-VersionManagerPath (Get-Command openclaw -ErrorAction SilentlyContinue | ForEach-Object Source)) {
-            Write-WarnMsg "检测到 openclaw 来自版本管理器路径：$((Get-Command openclaw).Source)，将改为系统 npm 安装"
+        $existingOpenClaw = Get-OpenClawCommand
+        if (Test-VersionManagerPath $existingOpenClaw) {
+            Write-WarnMsg "检测到 openclaw 来自版本管理器路径：$existingOpenClaw，将改为系统 npm 安装"
         } else {
             Write-Info "检测到已安装最新版 OpenClaw：$installedVersion，跳过安装"
             return
@@ -187,14 +264,14 @@ function Ensure-OpenClaw {
         Write-Info '未检测到 OpenClaw，将执行安装'
     }
 
-    & npm install -g openclaw@latest
+    Invoke-Npm install -g openclaw@latest
     Refresh-Path
 
-    if (-not (Test-Command 'openclaw')) {
+    if ([string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
         Throw-Fail 'OpenClaw 安装后未找到命令'
     }
 
-    Write-Info "OpenClaw 版本：$(((& openclaw --version) | Select-Object -Last 1).Trim())"
+    Write-Info "OpenClaw 版本：$(((Invoke-OpenClaw --version) | Select-Object -Last 1).Trim())"
 }
 
 function Prompt-ApiKey {
@@ -369,7 +446,7 @@ function Invoke-OpenClawWithServiceEnv {
         [string[]]$Arguments
     )
 
-    $openclawPath = (Get-Command openclaw).Source
+    $openclawPath = Get-OpenClawCommand
     $previousPath = $env:Path
     $previousPort = $env:OPENCLAW_PORT
     $previousGatewayPort = $env:OPENCLAW_GATEWAY_PORT
@@ -456,7 +533,7 @@ function Verify-UpstreamApi {
 
 function Test-GatewayHealth {
     try {
-        & openclaw gateway health *> $null
+        Invoke-OpenClaw gateway health *> $null
         if ($LASTEXITCODE -eq 0) {
             return $true
         }
@@ -464,7 +541,7 @@ function Test-GatewayHealth {
 
     $statusOutput = ''
     try {
-        $statusOutput = (& openclaw gateway status --deep 2>&1 | Out-String)
+        $statusOutput = (Invoke-OpenClaw gateway status --deep 2>&1 | Out-String)
     } catch {
         $statusOutput = ($_ | Out-String)
     }
@@ -482,7 +559,7 @@ function Invoke-GatewayForegroundProbe {
 
     $job = Start-Job -ScriptBlock {
         param($Port, $ProbeLog)
-        & openclaw gateway run --port $Port --bind loopback --verbose *> $ProbeLog
+        Invoke-OpenClaw gateway run --port $Port --bind loopback --verbose *> $ProbeLog
     } -ArgumentList $GatewayPort, $probeLog
 
     Start-Sleep -Seconds 12
@@ -500,12 +577,12 @@ function Invoke-GatewayForegroundProbe {
 function Show-GatewayDiagnostics {
     Write-WarnMsg '开始采集网关诊断信息'
 
-    try { & openclaw config get gateway.mode } catch {}
-    try { & openclaw config get gateway.bind } catch {}
-    try { & openclaw config get gateway.port } catch {}
-    try { & openclaw gateway status --deep } catch { try { & openclaw gateway status } catch {} }
-    try { & openclaw status --all } catch {}
-    try { & openclaw logs --limit 200 --plain } catch {}
+    try { Invoke-OpenClaw config get gateway.mode } catch {}
+    try { Invoke-OpenClaw config get gateway.bind } catch {}
+    try { Invoke-OpenClaw config get gateway.port } catch {}
+    try { Invoke-OpenClaw gateway status --deep } catch { try { Invoke-OpenClaw gateway status } catch {} }
+    try { Invoke-OpenClaw status --all } catch {}
+    try { Invoke-OpenClaw logs --limit 200 --plain } catch {}
 
     if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
         $listener = Get-NetTCPConnection -LocalPort $GatewayPort -State Listen -ErrorAction SilentlyContinue
@@ -552,12 +629,12 @@ function Install-AndStartGateway {
         Throw-Fail '网关仍未就绪，请优先执行 openclaw gateway status --deep 和 openclaw logs --follow'
     }
 
-    try { & openclaw gateway status } catch {}
+    try { Invoke-OpenClaw gateway status } catch {}
 }
 
 function Get-ConfigPath {
     try {
-        $lines = & openclaw config file 2>$null
+        $lines = Invoke-OpenClaw config file 2>$null
         $last = ($lines | Select-Object -Last 1).Trim()
         if (-not [string]::IsNullOrWhiteSpace($last)) {
             if ($last.StartsWith('~/') -or $last.StartsWith('~\')) {
@@ -585,7 +662,7 @@ function Ensure-OpenClawBootstrap {
     } else {
         Write-Info '无交互初始化 OpenClaw'
         try {
-            & openclaw onboard --non-interactive --accept-risk --mode local --auth-choice custom-api-key --custom-provider-id $ProviderId --custom-compatibility openai --custom-base-url $BaseUrl --custom-model-id $ModelId --custom-api-key $ApiKey --gateway-port $GatewayPort --gateway-bind loopback --skip-daemon --skip-health --skip-skills
+            Invoke-OpenClaw onboard --non-interactive --accept-risk --mode local --auth-choice custom-api-key --custom-provider-id $ProviderId --custom-compatibility openai --custom-base-url $BaseUrl --custom-model-id $ModelId --custom-api-key $ApiKey --gateway-port $GatewayPort --gateway-bind loopback --skip-daemon --skip-health --skip-skills
         } catch {
             Write-WarnMsg '无交互 onboard 失败，回退到最小初始化流程'
             New-Item -ItemType Directory -Path $configHome -Force | Out-Null
@@ -650,13 +727,13 @@ fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 
 function Validate-OpenClaw {
     Write-Info '校验 OpenClaw 配置'
-    & openclaw config validate
+    Invoke-OpenClaw config validate
 }
 
 function Probe-Provider {
     Write-Info '探测模型可用性'
     try {
-        & openclaw models status --probe --probe-provider $ProviderId --json
+        Invoke-OpenClaw models status --probe --probe-provider $ProviderId --json
     } catch {
         Write-WarnMsg '模型探测失败，请检查网络、API Key 或上游模型权限'
     }
@@ -672,8 +749,9 @@ function Remove-PathSafe([string]$PathValue) {
 function Remove-OpenClawPackage {
     $npmCandidates = New-Object System.Collections.Generic.List[string]
 
-    if (Test-Command 'npm') {
-        $npmCandidates.Add((Get-Command npm).Source)
+    $resolvedNpm = Get-NpmCommand
+    if (-not [string]::IsNullOrWhiteSpace($resolvedNpm)) {
+        $npmCandidates.Add($resolvedNpm)
     }
 
     foreach ($candidate in @(
