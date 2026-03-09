@@ -13,6 +13,7 @@ $ProviderId = 'megabyai'
 $BaseUrl = 'https://newapi.megabyai.cc/v1'
 $DefaultModelId = 'gpt-5.3-codex'
 $EnableBrowserTool = $env:OPENCLAW_ENABLE_BROWSER_TOOL -ne '0'
+$SkipServiceInstall = $false
 
 function Initialize-ConsoleEncoding {
     try {
@@ -195,6 +196,28 @@ function Throw-Fail($Message) {
 
 function Test-Command($Name) {
     return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Test-IsElevated {
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        return $false
+    }
+}
+
+function Initialize-WindowsInstallMode {
+    if (Test-IsElevated) {
+        Write-Info 'Running with administrator privileges; Scheduled Task install is allowed'
+        $script:SkipServiceInstall = $false
+        return
+    }
+
+    Write-WarnMsg 'Not running as administrator. Scheduled Task install will be skipped; gateway will run in user mode'
+    Write-WarnMsg 'For persistent auto-start, rerun PowerShell as Administrator and install again'
+    $script:SkipServiceInstall = $true
 }
 
 function Resolve-CliShim {
@@ -765,8 +788,9 @@ function Start-GatewayWithoutService {
         $env:NODE_COMPILE_CACHE = Join-Path $env:TEMP 'openclaw-compile-cache'
         $env:OPENCLAW_NO_RESPAWN = '1'
 
-        Write-WarnMsg 'Scheduled Task install failed; falling back to no-service gateway startup under the current user'
-        Start-Process -FilePath $openclawPath -ArgumentList @('gateway', 'run', '--port', [string]$GatewayPort, '--bind', 'loopback') -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog | Out-Null
+        Write-WarnMsg 'Starting gateway in no-service user mode'
+        $commandLine = "`"$openclawPath`" gateway run --port $GatewayPort --bind loopback 1>> `"$stdoutLog`" 2>> `"$stderrLog`""
+        Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', $commandLine) -WindowStyle Hidden | Out-Null
         Start-Sleep -Seconds 5
     } finally {
         $env:Path = $previousPath
@@ -837,14 +861,19 @@ function Repair-GatewayService {
 
     Write-WarnMsg 'Gateway health check failed; trying openclaw doctor --fix'
     try { Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir doctor --fix } catch { try { Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir doctor --yes } catch {} }
-    try {
-        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
-    } catch {
-        if (Test-ServiceInstallAccessDenied $_.Exception.Message) {
-            Start-GatewayWithoutService -ConfigPath $configPath -StateDir $stateDir
-            return
+    if ($script:SkipServiceInstall) {
+        Start-GatewayWithoutService -ConfigPath $configPath -StateDir $stateDir
+        return
+    } else {
+        try {
+            Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
+        } catch {
+            if (Test-ServiceInstallAccessDenied $_.Exception.Message) {
+                Start-GatewayWithoutService -ConfigPath $configPath -StateDir $stateDir
+                return
+            }
+            throw
         }
-        throw
     }
     try {
         Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway restart
@@ -859,14 +888,16 @@ function Install-AndStartGateway {
     $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { Join-Path $HOME '.openclaw' }
 
     Write-Info 'Installing and starting gateway'
-    $serviceInstallOk = $true
-    try {
-        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
-    } catch {
-        if (Test-ServiceInstallAccessDenied $_.Exception.Message) {
-            $serviceInstallOk = $false
-        } else {
-            throw
+    $serviceInstallOk = -not $script:SkipServiceInstall
+    if (-not $script:SkipServiceInstall) {
+        try {
+            Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
+        } catch {
+            if (Test-ServiceInstallAccessDenied $_.Exception.Message) {
+                $serviceInstallOk = $false
+            } else {
+                throw
+            }
         }
     }
 
@@ -1160,6 +1191,7 @@ if (-not ($PSVersionTable -and ($env:OS -eq 'Windows_NT'))) {
 }
 
 Initialize-ConsoleEncoding
+Initialize-WindowsInstallMode
 Initialize-Proxy
 
 if ($Uninstall) {
