@@ -7,6 +7,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$GatewayPortInput = if ($PSBoundParameters.ContainsKey('GatewayPort') -or -not [string]::IsNullOrWhiteSpace($env:OPENCLAW_PORT)) { $GatewayPort } else { $null }
 $ProviderId = 'megabyai'
 $BaseUrl = 'https://newapi.megabyai.cc/v1'
 $DefaultModelId = 'gpt-5.3-codex'
@@ -36,6 +37,31 @@ function Refresh-Path {
     }
 }
 
+function Add-PathEntries([string[]]$Entries) {
+    $parts = New-Object System.Collections.Generic.List[string]
+    foreach ($existing in ($env:Path -split ';')) {
+        if (-not [string]::IsNullOrWhiteSpace($existing) -and -not $parts.Contains($existing)) {
+            $parts.Add($existing)
+        }
+    }
+
+    foreach ($entry in ($Entries | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        if ($parts.Contains($entry)) {
+            $parts.Remove($entry) | Out-Null
+        }
+        $parts.Insert(0, $entry)
+    }
+
+    $env:Path = $parts -join ';'
+}
+
+function Get-SystemNodeDirectories {
+    @(
+        'C:\Program Files\nodejs',
+        'C:\Program Files (x86)\nodejs'
+    )
+}
+
 function Get-NodeMajorVersion {
     if (-not (Test-Command 'node')) {
         return $null
@@ -63,7 +89,20 @@ function Test-VersionManagerPath($PathValue) {
     return $PathValue -match '\nvm\' -or $PathValue -match '\fnm\' -or $PathValue -match '\volta\' -or $PathValue -match '\asdf\' -or $PathValue -match '\shim[s]?\'
 }
 
+function Prefer-SystemNodePath {
+    Refresh-Path
+    Add-PathEntries (Get-SystemNodeDirectories)
+    if ((Get-NodeMajorVersion) -ge 22 -and (Test-ServiceSafeNodePath)) {
+        Write-Info "已切换到系统 Node.js：$(node -v) ($((Get-Command node).Source))"
+        return $true
+    }
+
+    return $false
+}
+
 function Ensure-Node {
+    Prefer-SystemNodePath | Out-Null
+
     $major = Get-NodeMajorVersion
     $needsInstall = $false
 
@@ -95,7 +134,7 @@ function Ensure-Node {
     }
 
     Refresh-Path
-    $env:Path = 'C:\Program Files\nodejs;C:\Program Files (x86)\nodejs;' + $env:Path
+    Add-PathEntries (Get-SystemNodeDirectories)
     $major = Get-NodeMajorVersion
     if ($major -lt 22) {
         Throw-Fail "Node.js 安装后版本仍低于 22：$(node -v)"
@@ -175,6 +214,19 @@ function Prompt-Model {
         return
     }
 
+    $nonInteractive = $false
+    try {
+        $nonInteractive = [Console]::IsInputRedirected -or (-not [Environment]::UserInteractive)
+    } catch {
+        $nonInteractive = -not [Environment]::UserInteractive
+    }
+
+    if ($nonInteractive) {
+        $script:ModelId = $DefaultModelId
+        Write-Info "非交互环境，使用默认模型：$script:ModelId"
+        return
+    }
+
     $inputModel = Read-Host "请输入模型 ID（默认 $DefaultModelId）"
     if ([string]::IsNullOrWhiteSpace($inputModel)) {
         $script:ModelId = $DefaultModelId
@@ -194,12 +246,49 @@ function Test-PortListening([int]$Port) {
     return $null -ne $output
 }
 
+function Get-ConfiguredGatewayPort {
+    $envFile = Join-Path $HOME '.openclaw\.env'
+    if (Test-Path $envFile) {
+        $line = Get-Content -Path $envFile -ErrorAction SilentlyContinue | Where-Object { $_ -match '^OPENCLAW_GATEWAY_PORT=' } | Select-Object -First 1
+        if ($line) {
+            $value = ($line -replace '^OPENCLAW_GATEWAY_PORT=', '').Trim()
+            if ($value -match '^\d+$') {
+                return [int]$value
+            }
+        }
+    }
+
+    $configPath = Join-Path $HOME '.openclaw\openclaw.json'
+    if (Test-Path $configPath) {
+        try {
+            $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
+            if ($config.gateway.port) {
+                return [int]$config.gateway.port
+            }
+        } catch {}
+    }
+
+    return $null
+}
+
 function Choose-GatewayPort {
     $candidate = $GatewayPort
     $maxPort = $GatewayPort + 20
+    $existingPort = Get-ConfiguredGatewayPort
+
+    if ($null -eq $GatewayPortInput -and $existingPort -and (Test-GatewayHealth)) {
+        $candidate = $existingPort
+    }
 
     while ($candidate -le $maxPort) {
         if (Test-PortListening $candidate) {
+            if ($existingPort -and $candidate -eq $existingPort -and (Test-GatewayHealth)) {
+                $script:GatewayPort = $candidate
+                $env:OPENCLAW_PORT = [string]$candidate
+                Write-Info "检测到现有 OpenClaw 网关正在使用端口：$candidate，复用该端口"
+                return
+            }
+
             Write-WarnMsg "端口 $candidate 已被占用，尝试下一个端口"
             $candidate++
             continue
@@ -214,20 +303,17 @@ function Choose-GatewayPort {
     Throw-Fail '未找到可用网关端口，请手动设置 OPENCLAW_PORT'
 }
 
-function Write-ServiceEnv {
-    param(
-        [string]$ConfigPath = (Join-Path $HOME '.openclaw\openclaw.json')
-    )
-
-    $configHome = Join-Path $HOME '.openclaw'
-    $envFile = Join-Path $configHome '.env'
-    New-Item -ItemType Directory -Path $configHome -Force | Out-Null
-
+function Get-ServicePath {
     $pathEntries = New-Object System.Collections.Generic.List[string]
     foreach ($candidate in @(
         (Split-Path -Parent (Get-Command node).Source),
         'C:\Program Files\nodejs',
         'C:\Program Files (x86)\nodejs',
+        (Join-Path $HOME '.local\bin'),
+        (Join-Path $HOME '.npm-global\bin'),
+        (Join-Path $HOME 'bin'),
+        (Join-Path $HOME '.bun\bin'),
+        (Join-Path $HOME '.local\share\pnpm'),
         [Environment]::GetEnvironmentVariable('Path', 'Machine'),
         [Environment]::GetEnvironmentVariable('Path', 'User')
     )) {
@@ -240,16 +326,29 @@ function Write-ServiceEnv {
         }
     }
 
-    $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { $configHome }
-
     $filteredEntries = New-Object System.Collections.Generic.List[string]
     foreach ($entry in $pathEntries) {
         if (Test-VersionManagerPath $entry) { continue }
         if (-not $filteredEntries.Contains($entry)) { $filteredEntries.Add($entry) }
     }
 
+    return ($filteredEntries -join ';')
+}
+
+function Write-ServiceEnv {
+    param(
+        [string]$ConfigPath = (Join-Path $HOME '.openclaw\openclaw.json')
+    )
+
+    $configHome = Join-Path $HOME '.openclaw'
+    $envFile = Join-Path $configHome '.env'
+    New-Item -ItemType Directory -Path $configHome -Force | Out-Null
+
+    $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { $configHome }
+    $servicePath = Get-ServicePath
+
     @(
-        "PATH=$($filteredEntries -join ';')",
+        "PATH=$servicePath",
         "OPENCLAW_PORT=$GatewayPort",
         "OPENCLAW_GATEWAY_PORT=$GatewayPort",
         "OPENCLAW_CONFIG_PATH=$ConfigPath",
@@ -259,6 +358,43 @@ function Write-ServiceEnv {
     ) | Set-Content -Path $envFile -Encoding UTF8
 
     Write-Info "已写入服务环境文件：$envFile"
+}
+
+function Invoke-OpenClawWithServiceEnv {
+    param(
+        [string]$ConfigPath,
+        [string]$StateDir,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $openclawPath = (Get-Command openclaw).Source
+    $previousPath = $env:Path
+    $previousPort = $env:OPENCLAW_PORT
+    $previousGatewayPort = $env:OPENCLAW_GATEWAY_PORT
+    $previousConfigPath = $env:OPENCLAW_CONFIG_PATH
+    $previousStateDir = $env:OPENCLAW_STATE_DIR
+    $previousCompileCache = $env:NODE_COMPILE_CACHE
+    $previousNoRespawn = $env:OPENCLAW_NO_RESPAWN
+
+    try {
+        $env:Path = Get-ServicePath
+        $env:OPENCLAW_PORT = [string]$GatewayPort
+        $env:OPENCLAW_GATEWAY_PORT = [string]$GatewayPort
+        $env:OPENCLAW_CONFIG_PATH = $ConfigPath
+        $env:OPENCLAW_STATE_DIR = $StateDir
+        $env:NODE_COMPILE_CACHE = Join-Path $env:TEMP 'openclaw-compile-cache'
+        $env:OPENCLAW_NO_RESPAWN = '1'
+        & $openclawPath @Arguments
+    } finally {
+        $env:Path = $previousPath
+        $env:OPENCLAW_PORT = $previousPort
+        $env:OPENCLAW_GATEWAY_PORT = $previousGatewayPort
+        $env:OPENCLAW_CONFIG_PATH = $previousConfigPath
+        $env:OPENCLAW_STATE_DIR = $previousStateDir
+        $env:NODE_COMPILE_CACHE = $previousCompileCache
+        $env:OPENCLAW_NO_RESPAWN = $previousNoRespawn
+    }
 }
 
 function Test-UpstreamWithPowerShell {
@@ -379,24 +515,30 @@ function Show-GatewayDiagnostics {
 }
 
 function Repair-GatewayService {
+    $configPath = Get-ConfigPath
+    $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { Join-Path $HOME '.openclaw' }
+
     Write-WarnMsg '网关健康检查失败，尝试执行 openclaw doctor --fix 修复服务'
-    try { & openclaw doctor --fix } catch { try { & openclaw doctor --yes } catch {} }
-    & openclaw gateway install --runtime node --port $GatewayPort --force
+    try { Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir doctor --fix } catch { try { Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir doctor --yes } catch {} }
+    Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
     try {
-        & openclaw gateway restart
+        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway restart
     } catch {
-        & openclaw gateway start
+        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway start
     }
     Start-Sleep -Seconds 3
 }
 
 function Install-AndStartGateway {
+    $configPath = Get-ConfigPath
+    $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { Join-Path $HOME '.openclaw' }
+
     Write-Info '安装并启动网关'
-    & openclaw gateway install --runtime node --port $GatewayPort --force
+    Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
     try {
-        & openclaw gateway restart
+        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway restart
     } catch {
-        & openclaw gateway start
+        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway start
     }
     Start-Sleep -Seconds 3
 
@@ -420,6 +562,12 @@ function Get-ConfigPath {
             if ($last.StartsWith('~/') -or $last.StartsWith('~\')) {
                 return (Join-Path $HOME ($last.Substring(2) -replace '/', '\'))
             }
+            if ($last.StartsWith('$HOME/')) {
+                return (Join-Path $HOME ($last.Substring(6) -replace '/', '\'))
+            }
+            if ($last.StartsWith('$HOME\')) {
+                return (Join-Path $HOME $last.Substring(6))
+            }
             return $last
         }
     } catch {}
@@ -436,7 +584,7 @@ function Ensure-OpenClawBootstrap {
     } else {
         Write-Info '无交互初始化 OpenClaw'
         try {
-            & openclaw onboard --non-interactive --mode local --auth-choice custom-api-key --custom-provider-id $ProviderId --custom-compatibility openai --custom-base-url $BaseUrl --custom-model-id $ModelId --custom-api-key $ApiKey --gateway-port $GatewayPort --gateway-bind loopback --skip-skills
+            & openclaw onboard --non-interactive --accept-risk --mode local --auth-choice custom-api-key --custom-provider-id $ProviderId --custom-compatibility openai --custom-base-url $BaseUrl --custom-model-id $ModelId --custom-api-key $ApiKey --gateway-port $GatewayPort --gateway-bind loopback --skip-daemon --skip-health --skip-skills
         } catch {
             Write-WarnMsg '无交互 onboard 失败，回退到最小初始化流程'
             New-Item -ItemType Directory -Path $configHome -Force | Out-Null

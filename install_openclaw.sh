@@ -466,6 +466,73 @@ build_service_path() {
   normalize_path_entries "$cleaned_path"
 }
 
+resolve_gateway_launch_agent_label() {
+  local profile="${OPENCLAW_PROFILE:-}"
+  if [ -z "$profile" ] || [ "$profile" = "default" ]; then
+    printf '%s\n' 'ai.openclaw.gateway'
+    return 0
+  fi
+
+  printf 'ai.openclaw.%s\n' "$profile"
+}
+
+rewrite_macos_gateway_launch_agent() {
+  local plist_path config_path="$1" state_dir="$2"
+
+  [ "$OS" = "macos" ] || return 0
+  plist_path="$HOME/Library/LaunchAgents/$(resolve_gateway_launch_agent_label).plist"
+  [ -f "$plist_path" ] || return 0
+
+  node - "$plist_path" "$HOME" "$state_dir" "$config_path" "$(build_service_path)" <<'NODE'
+const fs = require('fs');
+
+const [plistPath, homeDir, stateDir, configPath, servicePath] = process.argv.slice(2);
+let text = fs.readFileSync(plistPath, 'utf8');
+const replacements = {
+  HOME: homeDir,
+  OPENCLAW_STATE_DIR: stateDir,
+  OPENCLAW_CONFIG_PATH: configPath,
+  PATH: servicePath,
+};
+
+const envBlockPattern = /<key>EnvironmentVariables<\/key>\s*<dict>([\s\S]*?)<\/dict>/i;
+const existingMatch = text.match(envBlockPattern);
+const envMap = {};
+
+if (existingMatch) {
+  for (const pair of existingMatch[1].matchAll(/<key>([\s\S]*?)<\/key>\s*<string>([\s\S]*?)<\/string>/gi)) {
+    const key = pair[1].trim();
+    const value = pair[2].trim();
+    if (key) envMap[key] = value;
+  }
+}
+
+for (const [key, value] of Object.entries(replacements)) {
+  envMap[key] = value;
+}
+
+const escapeXml = (value) => value
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&apos;');
+
+const envXml = `\n    <key>EnvironmentVariables</key>\n    <dict>${Object.entries(envMap)
+  .filter(([, value]) => typeof value === 'string' && value.trim())
+  .map(([key, value]) => `\n    <key>${escapeXml(key)}</key>\n    <string>${escapeXml(value.trim())}</string>`)
+  .join('')}\n    </dict>`;
+
+if (existingMatch) {
+  text = text.replace(envBlockPattern, envXml.trimStart());
+} else {
+  text = text.replace(/\n  <\/dict>\n<\/plist>\n?$/i, `${envXml}\n  </dict>\n</plist>\n`);
+}
+
+fs.writeFileSync(plistPath, text);
+NODE
+}
+
 openclaw_bin_path() {
   local openclaw_bin
   openclaw_bin="$(command -v openclaw 2>/dev/null || true)"
@@ -523,6 +590,13 @@ fs.writeFileSync(unitFile, text);
 NODE
 
   systemctl --user daemon-reload
+}
+
+rewrite_gateway_service_definition() {
+  local config_path="$1" state_dir="$2"
+
+  rewrite_linux_gateway_service_unit "$config_path" "$state_dir"
+  rewrite_macos_gateway_launch_agent "$config_path" "$state_dir"
 }
 
 write_service_env() {
@@ -703,7 +777,7 @@ repair_gateway_service() {
   run_openclaw_with_service_env "$config_path" "$state_dir" doctor --fix || \
     run_openclaw_with_service_env "$config_path" "$state_dir" doctor --yes || true
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway install --runtime node --port "$OPENCLAW_PORT" --force
-  rewrite_linux_gateway_service_unit "$config_path" "$state_dir"
+  rewrite_gateway_service_definition "$config_path" "$state_dir"
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway restart || \
     run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
   sleep 3
@@ -716,7 +790,7 @@ install_and_start_gateway() {
 
   log '安装并启动网关'
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway install --runtime node --port "$OPENCLAW_PORT" --force
-  rewrite_linux_gateway_service_unit "$config_path" "$state_dir"
+  rewrite_gateway_service_definition "$config_path" "$state_dir"
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway restart || \
     run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
   sleep 3
