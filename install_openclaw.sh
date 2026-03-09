@@ -1074,7 +1074,7 @@ choose_gateway_port() {
       if [ -n "$existing_port" ] && [ "$candidate" = "$existing_port" ] && gateway_health_check; then
         OPENCLAW_PORT="$candidate"
         export OPENCLAW_PORT
-        log "检测到现有 OpenClaw 网关正在使用端口：$OPENCLAW_PORT，复用该端口"
+        log "检测到现有 OpenClaw 网关正在使用端口：${OPENCLAW_PORT}，复用该端口"
         return 0
       fi
 
@@ -1085,7 +1085,7 @@ choose_gateway_port() {
 
     OPENCLAW_PORT="$candidate"
     export OPENCLAW_PORT
-    log "将使用网关端口：$OPENCLAW_PORT"
+    log "将使用网关端口：${OPENCLAW_PORT}"
     return 0
   done
 
@@ -1564,7 +1564,7 @@ open_dashboard_ui() {
   log "尝试打开 OpenClaw Control UI"
   dashboard_output="$(run_openclaw_with_service_env "$config_path" "$state_dir" dashboard 2>&1 || true)"
   dashboard_url="$(printf '%s\n' "$dashboard_output" | extract_dashboard_url)"
-  [ -n "$dashboard_url" ] || dashboard_url="http://127.0.0.1:$OPENCLAW_PORT/"
+  [ -n "$dashboard_url" ] || dashboard_url="http://127.0.0.1:${OPENCLAW_PORT}/"
 
   case "$OS" in
     macos)
@@ -1781,7 +1781,7 @@ main() {
     printf '%s' 'disabled (OPENCLAW_ENABLE_BROWSER_TOOL=0 可关闭默认启用)'
   fi
 )
-- Dashboard：http://127.0.0.1:$OPENCLAW_PORT/
+- Dashboard：http://127.0.0.1:${OPENCLAW_PORT}/
 - Gateway token：$(gateway_auth_token "$config_path" 2>/dev/null || printf '%s' '未读取到，请执行 openclaw config get gateway.auth.token')
 
 可继续手动测试：
