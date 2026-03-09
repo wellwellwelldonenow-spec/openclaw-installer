@@ -15,6 +15,7 @@ OS=""
 ARCH=""
 TEMP_SWAP_FILE="/var/tmp/openclaw-installer.swap"
 TEMP_SWAP_ACTIVE=0
+AUTO_PROXY_URL=""
 
 log() {
   printf '\033[1;34m[INFO]\033[0m %s\n' "$*"
@@ -78,6 +79,83 @@ parse_cli_args() {
     esac
     shift
   done
+}
+
+proxy_already_configured() {
+  [ -n "${HTTPS_PROXY:-}" ] || [ -n "${https_proxy:-}" ] || \
+    [ -n "${HTTP_PROXY:-}" ] || [ -n "${http_proxy:-}" ] || \
+    [ -n "${ALL_PROXY:-}" ] || [ -n "${all_proxy:-}" ]
+}
+
+export_proxy_url() {
+  local proxy_url="$1"
+  AUTO_PROXY_URL="$proxy_url"
+  export HTTP_PROXY="$proxy_url"
+  export HTTPS_PROXY="$proxy_url"
+  export ALL_PROXY="$proxy_url"
+  export http_proxy="$proxy_url"
+  export https_proxy="$proxy_url"
+  export all_proxy="$proxy_url"
+  log "已自动启用本地代理：$proxy_url"
+}
+
+probe_proxy_url() {
+  local proxy_url="$1"
+  curl -fsSIL --connect-timeout 3 --max-time 8 --proxy "$proxy_url" https://github.com >/dev/null 2>&1
+}
+
+macos_proxy_candidates() {
+  [ "$OS" = "macos" ] || return 0
+  command -v scutil >/dev/null 2>&1 || return 0
+
+  scutil --proxy 2>/dev/null | awk '
+    /^HTTPEnable : 1$/ { http=1 }
+    /^HTTPProxy : / { http_host=$3 }
+    /^HTTPPort : / { http_port=$3 }
+    /^HTTPSEnable : 1$/ { https=1 }
+    /^HTTPSProxy : / { https_host=$3 }
+    /^HTTPSPort : / { https_port=$3 }
+    /^SOCKSEnable : 1$/ { socks=1 }
+    /^SOCKSProxy : / { socks_host=$3 }
+    /^SOCKSPort : / { socks_port=$3 }
+    END {
+      if (http && http_host && http_port) printf "http://%s:%s\n", http_host, http_port;
+      if (https && https_host && https_port) printf "http://%s:%s\n", https_host, https_port;
+      if (socks && socks_host && socks_port) printf "socks5h://%s:%s\n", socks_host, socks_port;
+    }'
+}
+
+auto_detect_local_proxy() {
+  local candidate
+
+  if proxy_already_configured; then
+    log "检测到已设置代理环境变量，保留现有代理配置"
+    return 0
+  fi
+
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if probe_proxy_url "$candidate"; then
+      export_proxy_url "$candidate"
+      return 0
+    fi
+  done <<EOF
+$(macos_proxy_candidates)
+http://127.0.0.1:7890
+http://127.0.0.1:7897
+http://127.0.0.1:8080
+http://127.0.0.1:8888
+http://localhost:7890
+http://localhost:7897
+http://localhost:8080
+http://localhost:8888
+socks5h://127.0.0.1:7891
+socks5h://127.0.0.1:1080
+socks5h://127.0.0.1:7898
+socks5h://localhost:7891
+socks5h://localhost:1080
+socks5h://localhost:7898
+EOF
 }
 
 command_as_text() {
@@ -1408,6 +1486,7 @@ main() {
 
   detect_platform
   need_cmd curl
+  auto_detect_local_proxy
   prompt_api_key "$API_KEY_ARG"
   prompt_model
   ensure_node

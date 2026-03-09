@@ -28,6 +28,63 @@ function Initialize-ConsoleEncoding {
     } catch {}
 }
 
+function Proxy-AlreadyConfigured {
+    return -not [string]::IsNullOrWhiteSpace($env:HTTPS_PROXY) -or
+        -not [string]::IsNullOrWhiteSpace($env:HTTP_PROXY) -or
+        -not [string]::IsNullOrWhiteSpace($env:ALL_PROXY) -or
+        -not [string]::IsNullOrWhiteSpace($env:https_proxy) -or
+        -not [string]::IsNullOrWhiteSpace($env:http_proxy) -or
+        -not [string]::IsNullOrWhiteSpace($env:all_proxy)
+}
+
+function Set-ProxyEnvironment([string]$ProxyUrl) {
+    foreach ($name in @('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy')) {
+        Set-Item -Path "env:$name" -Value $ProxyUrl
+    }
+    Write-Info "已自动启用本地代理：$ProxyUrl"
+}
+
+function Test-ProxyCandidate([string]$ProxyUrl) {
+    try {
+        $params = @{
+            Uri = 'https://github.com'
+            Proxy = $ProxyUrl
+            TimeoutSec = 8
+            Method = 'Head'
+        }
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            $params.UseBasicParsing = $true
+        }
+        $response = Invoke-WebRequest @params
+        return $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
+    } catch {
+        return $false
+    }
+}
+
+function Initialize-Proxy {
+    if (Proxy-AlreadyConfigured) {
+        Write-Info '检测到已设置代理环境变量，保留现有代理配置'
+        return
+    }
+
+    foreach ($candidate in @(
+        'http://127.0.0.1:7890',
+        'http://127.0.0.1:7897',
+        'http://127.0.0.1:8080',
+        'http://127.0.0.1:8888',
+        'http://localhost:7890',
+        'http://localhost:7897',
+        'http://localhost:8080',
+        'http://localhost:8888'
+    )) {
+        if (Test-ProxyCandidate $candidate) {
+            Set-ProxyEnvironment $candidate
+            return
+        }
+    }
+}
+
 function Write-Info($Message) {
     Write-Host "[INFO] $Message" -ForegroundColor Cyan
 }
@@ -841,6 +898,7 @@ if (-not ($PSVersionTable -and ($env:OS -eq 'Windows_NT'))) {
 }
 
 Initialize-ConsoleEncoding
+Initialize-Proxy
 
 if ($Uninstall) {
     Invoke-Uninstall
