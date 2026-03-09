@@ -278,9 +278,11 @@ ensure_npm_global_bin_in_path() {
 }
 
 write_service_env() {
-  local config_home env_file service_path npm_prefix node_dir extra_paths cleaned_path
+  local config_home env_file service_path npm_prefix node_dir extra_paths cleaned_path config_path state_dir
   config_home="$HOME/.openclaw"
   env_file="$config_home/.env"
+  config_path="${1:-$HOME/.openclaw/openclaw.json}"
+  state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 
   mkdir -p "$config_home"
 
@@ -326,6 +328,9 @@ write_service_env() {
   cat > "$env_file" <<EOF
 PATH=$cleaned_path
 OPENCLAW_PORT=$OPENCLAW_PORT
+OPENCLAW_GATEWAY_PORT=$OPENCLAW_PORT
+OPENCLAW_CONFIG_PATH=$config_path
+OPENCLAW_STATE_DIR=$state_dir
 EOF
 
   log "已写入服务环境文件：$env_file"
@@ -383,14 +388,87 @@ gateway_log_path() {
 }
 
 gateway_health_check() {
-  openclaw gateway call health --url "ws://127.0.0.1:${OPENCLAW_PORT}" --timeout 5000 >/dev/null 2>&1
+  local status_output
+
+  if openclaw gateway health >/dev/null 2>&1; then
+    return 0
+  fi
+
+  status_output="$(mktemp /tmp/openclaw_gateway_status.XXXXXX 2>/dev/null || printf '/tmp/openclaw_gateway_status.txt')"
+  openclaw gateway status --deep >"$status_output" 2>&1 || true
+  grep -q 'RPC probe: ok' "$status_output"
+}
+
+run_gateway_foreground_probe() {
+  local probe_log probe_pid
+  probe_log='/tmp/openclaw_gateway_foreground.log'
+
+  warn '后台服务仍未就绪，尝试前台启动一次以抓取首个报错'
+  rm -f "$probe_log"
+
+  (
+    openclaw gateway run --port "$OPENCLAW_PORT" --bind loopback --verbose >"$probe_log" 2>&1
+  ) &
+  probe_pid=$!
+
+  sleep 12
+
+  if kill -0 "$probe_pid" >/dev/null 2>&1; then
+    kill "$probe_pid" >/dev/null 2>&1 || true
+  fi
+  wait "$probe_pid" 2>/dev/null || true
+
+  [ -f "$probe_log" ] && sed -n '1,160p' "$probe_log" >&2 || true
+}
+
+diagnose_gateway_failure() {
+  local gateway_log
+  gateway_log="$(gateway_log_path)"
+
+  warn '开始采集网关诊断信息'
+  openclaw config get gateway.mode >&2 || true
+  openclaw config get gateway.bind >&2 || true
+  openclaw config get gateway.port >&2 || true
+  openclaw gateway status --deep >&2 || openclaw gateway status >&2 || true
+  openclaw status --all >&2 || true
+  openclaw logs --limit 200 --plain >&2 || true
+
+  if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl --user status openclaw-gateway.service --no-pager -l >&2 || true
+    journalctl --user -u openclaw-gateway.service -n 200 --no-pager >&2 || true
+  fi
+
+  [ -f "$gateway_log" ] && tail -n 200 "$gateway_log" >&2 || true
+
+  if ! port_is_listening "$OPENCLAW_PORT"; then
+    run_gateway_foreground_probe
+  fi
 }
 
 repair_gateway_service() {
-  warn "网关健康检查失败，尝试执行 openclaw doctor --yes 自动修复服务"
-  openclaw doctor --yes || true
+  warn '网关健康检查失败，尝试执行 openclaw doctor --fix 自动修复服务'
+  openclaw doctor --fix || openclaw doctor --yes || true
   openclaw gateway install --runtime node --port "$OPENCLAW_PORT" --force
   openclaw gateway restart || openclaw gateway start || true
+  sleep 3
+}
+
+install_and_start_gateway() {
+  log '安装并启动网关'
+  openclaw gateway install --runtime node --port "$OPENCLAW_PORT" --force
+  openclaw gateway restart || openclaw gateway start || true
+  sleep 3
+
+  if ! gateway_health_check; then
+    repair_gateway_service
+  fi
+
+  if ! gateway_health_check; then
+    diagnose_gateway_failure
+    fail "网关仍未就绪，请优先查看：openclaw gateway status --deep && openclaw logs --follow"
+  fi
+
+  openclaw gateway status || true
 }
 
 
@@ -562,7 +640,7 @@ verify_upstream_api() {
   fail 'API Key 无效、上游接口不可用，或本机网络/TLS 连接存在问题'
 }
 
-ensure_openclaw_initialized() {
+bootstrap_openclaw() {
   local config_home
   config_home="${HOME}/.openclaw"
 
@@ -575,28 +653,6 @@ ensure_openclaw_initialized() {
       mkdir -p "$config_home"
     fi
   fi
-
-  log "安装并启动网关"
-  openclaw gateway install --runtime node --port "$OPENCLAW_PORT" --force
-  openclaw gateway start || openclaw gateway restart
-
-  if ! gateway_health_check; then
-    repair_gateway_service
-  fi
-
-  if ! gateway_health_check; then
-    local gateway_log
-    gateway_log="$(gateway_log_path)"
-    openclaw gateway status || true
-    if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
-      systemctl --user status openclaw-gateway.service --no-pager -l >&2 || true
-      journalctl --user -u openclaw-gateway.service -n 80 --no-pager >&2 || true
-    fi
-    [ -f "$gateway_log" ] && tail -n 80 "$gateway_log" >&2 || true
-    fail "网关仍未监听 127.0.0.1:${OPENCLAW_PORT}，请检查日志：$gateway_log"
-  fi
-
-  openclaw gateway status || true
 }
 
 resolve_config_path() {
@@ -618,10 +674,10 @@ write_openclaw_config() {
   fi
 
   log "写入 OpenClaw 配置：$config_path"
-  node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" <<'NODE'
+  node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" "$OPENCLAW_PORT" <<'NODE'
 const fs = require('fs');
 
-const [configPath, apiKey, baseUrl, providerId, modelId, modelName] = process.argv.slice(2);
+const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort] = process.argv.slice(2);
 
 let config = {};
 if (fs.existsSync(configPath)) {
@@ -653,6 +709,13 @@ config.models.providers[providerId] = {
   ],
 };
 
+config.gateway = config.gateway || {};
+config.gateway.mode = 'local';
+config.gateway.bind = 'loopback';
+config.gateway.port = Number(gatewayPort);
+config.gateway.reload = config.gateway.reload || {};
+config.gateway.reload.mode = config.gateway.reload.mode || 'hybrid';
+
 config.agents = config.agents || {};
 config.agents.defaults = config.agents.defaults || {};
 config.agents.defaults.model = config.agents.defaults.model || {};
@@ -661,17 +724,22 @@ config.agents.defaults.models = config.agents.defaults.models || {};
 config.agents.defaults.models[`${providerId}/${modelId}`] = {
   ...(config.agents.defaults.models[`${providerId}/${modelId}`] || {}),
 };
+config.agents.defaults.memorySearch = config.agents.defaults.memorySearch || {};
+if (typeof config.agents.defaults.memorySearch.provider === 'undefined' && typeof config.agents.defaults.memorySearch.enabled === 'undefined') {
+  config.agents.defaults.memorySearch.enabled = false;
+  config.agents.defaults.memorySearch.fallback = 'none';
+}
 
-fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
+`);
 NODE
 }
 
 validate_openclaw() {
-  log "校验配置并重启网关"
+  log "校验 OpenClaw 配置"
   openclaw config validate
-  openclaw gateway restart
-  openclaw gateway status
 }
+
 
 probe_provider() {
   log "探测模型可用性"
@@ -682,6 +750,8 @@ probe_provider() {
 }
 
 main() {
+  local config_path
+
   detect_platform
   need_cmd curl
   prompt_api_key "${1:-}"
@@ -689,11 +759,13 @@ main() {
   ensure_node
   choose_gateway_port
   install_openclaw
-  write_service_env
+  bootstrap_openclaw
+  config_path="$(resolve_config_path)"
+  write_service_env "$config_path"
   verify_upstream_api
-  ensure_openclaw_initialized
   write_openclaw_config
   validate_openclaw
+  install_and_start_gateway
   probe_provider || true
 
   cat <<MSG
@@ -706,6 +778,8 @@ main() {
 - Model：$MODEL_ID
 
 可继续手动测试：
+  openclaw gateway status --deep
+  openclaw logs --follow
   openclaw agent --local --message "测试：请回复OK"
 MSG
 }
