@@ -314,7 +314,17 @@ function Invoke-Npm {
         Throw-Fail 'npm.cmd not found; Node.js may not be installed correctly'
     }
 
-    & $npmCommand @Arguments
+    $output = & $npmCommand @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $message = ($output | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = "npm failed with exit code $exitCode"
+        }
+        throw $message
+    }
+
+    return $output
 }
 
 function Invoke-OpenClaw {
@@ -328,7 +338,17 @@ function Invoke-OpenClaw {
         Throw-Fail 'openclaw.cmd not found; complete OpenClaw installation first'
     }
 
-    & $openclawCommand @Arguments
+    $output = & $openclawCommand @Arguments 2>&1
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        $message = ($output | Out-String).Trim()
+        if ([string]::IsNullOrWhiteSpace($message)) {
+            $message = "openclaw failed with exit code $exitCode"
+        }
+        throw $message
+    }
+
+    return $output
 }
 
 function Refresh-Path {
@@ -517,7 +537,11 @@ function Get-InstalledOpenClawVersion {
         return ''
     }
 
-    return ((Invoke-OpenClaw --version 2>$null) | Select-Object -Last 1).Trim()
+    try {
+        return ((Invoke-OpenClaw --version 2>$null) | Select-Object -Last 1).Trim()
+    } catch {
+        return ''
+    }
 }
 
 function Get-LatestOpenClawVersion {
@@ -525,7 +549,11 @@ function Get-LatestOpenClawVersion {
         return ''
     }
 
-    return ((Invoke-Npm view openclaw version --silent 2>$null) | Select-Object -Last 1).Trim()
+    try {
+        return ((Invoke-Npm view openclaw version --silent 2>$null) | Select-Object -Last 1).Trim()
+    } catch {
+        return ''
+    }
 }
 
 function Ensure-OpenClaw {
@@ -762,7 +790,17 @@ function Invoke-OpenClawWithServiceEnv {
         $env:OPENCLAW_STATE_DIR = $StateDir
         $env:NODE_COMPILE_CACHE = Join-Path $env:TEMP 'openclaw-compile-cache'
         $env:OPENCLAW_NO_RESPAWN = '1'
-        & $openclawPath @Arguments
+        $output = & $openclawPath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) {
+            $message = ($output | Out-String).Trim()
+            if ([string]::IsNullOrWhiteSpace($message)) {
+                $message = "openclaw failed with exit code $exitCode"
+            }
+            throw $message
+        }
+
+        return $output
     } finally {
         $env:Path = $previousPath
         $env:OPENCLAW_PORT = $previousPort
