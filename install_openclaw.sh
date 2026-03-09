@@ -2,6 +2,7 @@
 
 set -Eeuo pipefail
 
+OPENCLAW_PORT_INPUT="${OPENCLAW_PORT:-}"
 OPENCLAW_PORT="${OPENCLAW_PORT:-18789}"
 PROVIDER_ID="megabyai"
 BASE_URL="https://newapi.megabyai.cc/v1"
@@ -292,8 +293,37 @@ install_node_linux() {
   fail "未识别的 Linux 包管理器，无法自动安装 Node.js 22"
 }
 
+prefer_existing_linux_system_node() {
+  local current_node previous_path major
+
+  [ "$OS" = "linux" ] || return 1
+  current_node="$(command -v node 2>/dev/null || true)"
+  linux_node_path_is_service_safe && return 0
+
+  previous_path="$PATH"
+  if ! prefer_system_node_path; then
+    return 1
+  fi
+
+  if major="$(node_major_version 2>/dev/null)" && [ "$major" -ge 22 ] && linux_node_path_is_service_safe; then
+    if [ "$(command -v node 2>/dev/null || true)" != "$current_node" ]; then
+      log "已切换到系统 Node.js：$(node -v) ($(command -v node))"
+    fi
+    return 0
+  fi
+
+  PATH="$previous_path"
+  export PATH
+  hash -r 2>/dev/null || true
+  return 1
+}
+
 ensure_node() {
   local major needs_install=0
+
+  if [ "$OS" = "linux" ]; then
+    prefer_existing_linux_system_node || true
+  fi
 
   if major="$(node_major_version 2>/dev/null)"; then
     if [ "$major" -ge 22 ]; then
@@ -382,6 +412,22 @@ normalize_path_entries() {
   printf '%s\n' "$filtered"
 }
 
+common_service_user_paths() {
+  local extras="" entry
+
+  for entry in \
+    "$HOME/.local/bin" \
+    "$HOME/.npm-global/bin" \
+    "$HOME/bin" \
+    "$HOME/.bun/bin" \
+    "$HOME/.local/share/pnpm"
+  do
+    extras="${extras:+$extras:}$entry"
+  done
+
+  printf '%s\n' "$extras"
+}
+
 build_service_path() {
   local service_path npm_prefix node_dir extra_paths cleaned_path
 
@@ -406,6 +452,10 @@ build_service_path() {
     if brew list node@22 >/dev/null 2>&1; then
       extra_paths="$(brew --prefix node@22 2>/dev/null || true)/bin:$extra_paths"
     fi
+  fi
+
+  if [ -n "$(common_service_user_paths)" ]; then
+    extra_paths="$(common_service_user_paths)${extra_paths:+:$extra_paths}"
   fi
 
   cleaned_path="$service_path"
@@ -514,13 +564,49 @@ port_is_listening() {
   return 1
 }
 
+configured_gateway_port() {
+  local env_file="$HOME/.openclaw/.env" configured_port=""
+
+  if [ -f "$env_file" ]; then
+    configured_port="$(awk -F= '/^OPENCLAW_GATEWAY_PORT=/{print $2; exit}' "$env_file" 2>/dev/null || true)"
+  fi
+
+  if [ -z "$configured_port" ] && [ -f "$HOME/.openclaw/openclaw.json" ] && command -v node >/dev/null 2>&1; then
+    configured_port="$(node - "$HOME/.openclaw/openclaw.json" <<'NODE'
+const fs = require('fs');
+const configPath = process.argv[2];
+try {
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const port = config && config.gateway && config.gateway.port;
+  if (port) process.stdout.write(String(port));
+} catch {}
+NODE
+)"
+  fi
+
+  [ -n "$configured_port" ] || return 1
+  printf '%s\n' "$configured_port"
+}
+
 choose_gateway_port() {
-  local candidate max_port
+  local candidate max_port existing_port
   candidate="${OPENCLAW_PORT:-18789}"
   max_port=$((candidate + 20))
+  existing_port="$(configured_gateway_port 2>/dev/null || true)"
+
+  if [ -z "$OPENCLAW_PORT_INPUT" ] && [ -n "$existing_port" ] && gateway_health_check; then
+    candidate="$existing_port"
+  fi
 
   while [ "$candidate" -le "$max_port" ]; do
     if port_is_listening "$candidate"; then
+      if [ -n "$existing_port" ] && [ "$candidate" = "$existing_port" ] && gateway_health_check; then
+        OPENCLAW_PORT="$candidate"
+        export OPENCLAW_PORT
+        log "检测到现有 OpenClaw 网关正在使用端口：$OPENCLAW_PORT，复用该端口"
+        return 0
+      fi
+
       warn "端口 $candidate 已被占用，尝试下一个端口"
       candidate=$((candidate + 1))
       continue
@@ -725,6 +811,13 @@ prompt_model() {
     MODEL_ID="$OPENCLAW_MODEL_ID"
     MODEL_NAME="${MODEL_ID} (newapi)"
     log "使用环境变量指定模型：$MODEL_ID"
+    return 0
+  fi
+
+  if [ ! -t 0 ]; then
+    MODEL_ID="$MODEL_ID_DEFAULT"
+    MODEL_NAME="${MODEL_ID} (newapi)"
+    log "非交互环境，使用默认模型：$MODEL_ID"
     return 0
   fi
 
