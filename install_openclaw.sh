@@ -13,6 +13,8 @@ MODEL_ID="${OPENCLAW_MODEL_ID:-$MODEL_ID_DEFAULT}"
 MODEL_NAME="${MODEL_ID} (newapi)"
 OS=""
 ARCH=""
+TEMP_SWAP_FILE="/var/tmp/openclaw-installer.swap"
+TEMP_SWAP_ACTIVE=0
 
 log() {
   printf '\033[1;34m[INFO]\033[0m %s\n' "$*"
@@ -29,6 +31,11 @@ fail() {
 
 cleanup() {
   rm -f /tmp/nodesource_setup_22.sh /tmp/openclaw_models_check.json /tmp/openclaw_xcode_install.log
+
+  if [ "$TEMP_SWAP_ACTIVE" = "1" ] && [ -f "$TEMP_SWAP_FILE" ]; then
+    swapoff "$TEMP_SWAP_FILE" >/dev/null 2>&1 || true
+    rm -f "$TEMP_SWAP_FILE" >/dev/null 2>&1 || true
+  fi
 }
 
 trap cleanup EXIT
@@ -73,11 +80,105 @@ parse_cli_args() {
   done
 }
 
+command_as_text() {
+  printf '%s' "$1"
+  shift || true
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+}
+
+memory_available_mb() {
+  [ "$OS" = "linux" ] || return 1
+  [ -r /proc/meminfo ] || return 1
+  awk '/MemAvailable:/ { printf "%d\n", $2 / 1024; found=1; exit } END { if (!found) exit 1 }' /proc/meminfo
+}
+
+swap_total_mb() {
+  [ "$OS" = "linux" ] || return 1
+  [ -r /proc/meminfo ] || return 1
+  awk '/SwapTotal:/ { printf "%d\n", $2 / 1024; found=1; exit } END { if (!found) exit 1 }' /proc/meminfo
+}
+
+ensure_linux_temp_swap() {
+  local mem_mb swap_mb desired_mb
+
+  [ "$OS" = "linux" ] || return 0
+  [ "$TEMP_SWAP_ACTIVE" = "0" ] || return 0
+
+  mem_mb="$(memory_available_mb 2>/dev/null || printf '0')"
+  swap_mb="$(swap_total_mb 2>/dev/null || printf '0')"
+
+  if [ "$mem_mb" -ge 1536 ] || [ "$swap_mb" -ge 512 ]; then
+    return 0
+  fi
+
+  if ! command -v swapon >/dev/null 2>&1 || ! command -v mkswap >/dev/null 2>&1; then
+    warn "检测到内存偏低（可用 ${mem_mb}MB，Swap ${swap_mb}MB），但系统缺少 swapon/mkswap，无法自动添加临时 swap"
+    return 0
+  fi
+
+  desired_mb=2048
+  warn "检测到内存偏低（可用 ${mem_mb}MB，Swap ${swap_mb}MB），尝试创建 ${desired_mb}MB 临时 swap 以避免安装被系统杀掉"
+
+  if [ -f "$TEMP_SWAP_FILE" ]; then
+    run_privileged rm -f "$TEMP_SWAP_FILE" || true
+  fi
+
+  if command -v fallocate >/dev/null 2>&1; then
+    run_privileged fallocate -l "${desired_mb}M" "$TEMP_SWAP_FILE" || return 0
+  else
+    run_privileged dd if=/dev/zero of="$TEMP_SWAP_FILE" bs=1M count="$desired_mb" status=none || return 0
+  fi
+
+  run_privileged chmod 600 "$TEMP_SWAP_FILE" || return 0
+  run_privileged mkswap "$TEMP_SWAP_FILE" >/dev/null || return 0
+  if run_privileged swapon "$TEMP_SWAP_FILE"; then
+    TEMP_SWAP_ACTIVE=1
+    log "临时 swap 已启用：$TEMP_SWAP_FILE"
+  else
+    warn "临时 swap 启用失败，将继续尝试安装，但如果再次出现 Killed，基本可判定为内存/容器限额不足"
+  fi
+}
+
+run_checked() {
+  local status
+
+  set +e
+  "$@"
+  status=$?
+  set -e
+
+  if [ "$status" -eq 137 ] || [ "$status" -eq 9 ]; then
+    fail "命令被系统强制终止（SIGKILL/OOM），通常表示内存或容器限额不足：$(command_as_text "$@")"
+  fi
+
+  return "$status"
+}
+
+npm_install_openclaw_cmd() {
+  local node_opts="${NODE_OPTIONS:-}"
+  if [ -n "$node_opts" ]; then
+    node_opts="$node_opts --max-old-space-size=512"
+  else
+    node_opts="--max-old-space-size=512"
+  fi
+
+  env \
+    npm_config_audit=false \
+    npm_config_fund=false \
+    npm_config_update_notifier=false \
+    npm_config_jobs=1 \
+    NODE_OPTIONS="$node_opts" \
+    npm install -g openclaw@latest
+}
+
 run_privileged() {
   if [ "${EUID:-$(id -u)}" -eq 0 ]; then
-    "$@"
+    run_checked "$@"
   elif command -v sudo >/dev/null 2>&1; then
-    sudo "$@"
+    run_checked sudo "$@"
   else
     fail "需要 root 权限执行：$*"
   fi
@@ -301,6 +402,7 @@ install_node_macos() {
 
 install_node_linux() {
   log "在 Linux 上安装 Node.js 22"
+  ensure_linux_temp_swap
 
   if command -v apt-get >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup_22.sh
@@ -858,6 +960,7 @@ latest_openclaw_version() {
 install_openclaw() {
   log "安装 OpenClaw"
   ensure_npm_global_bin_in_path
+  ensure_linux_temp_swap
 
   local installed_version="" latest_version="" prefix="" install_ok=0 force_reinstall=0
   installed_version="$(installed_openclaw_version 2>/dev/null || true)"
@@ -884,17 +987,29 @@ install_openclaw() {
   prefix="$(npm config get prefix 2>/dev/null || true)"
 
   if [ -n "$prefix" ] && [ -w "$prefix" ]; then
-    npm install -g openclaw@latest && install_ok=1 || true
+    run_checked npm_install_openclaw_cmd && install_ok=1 || true
   fi
 
   if [ "$install_ok" -eq 0 ]; then
     if [ "$OS" = "macos" ] && command -v nvm >/dev/null 2>&1; then
-      npm install -g openclaw@latest && install_ok=1 || true
+      run_checked npm_install_openclaw_cmd && install_ok=1 || true
     fi
   fi
 
   if [ "$install_ok" -eq 0 ]; then
-    run_privileged npm install -g openclaw@latest
+    run_privileged env \
+      npm_config_audit=false \
+      npm_config_fund=false \
+      npm_config_update_notifier=false \
+      npm_config_jobs=1 \
+      NODE_OPTIONS="$(
+        if [ -n "${NODE_OPTIONS:-}" ]; then
+          printf '%s --max-old-space-size=512' "$NODE_OPTIONS"
+        else
+          printf '%s' '--max-old-space-size=512'
+        fi
+      )" \
+      npm install -g openclaw@latest
   fi
 
   ensure_npm_global_bin_in_path
