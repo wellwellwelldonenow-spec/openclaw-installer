@@ -330,6 +330,15 @@ function Get-SystemNodeDirectories {
     )
 }
 
+function Get-SystemGitDirectories {
+    @(
+        'C:\Program Files\Git\cmd',
+        'C:\Program Files\Git\bin',
+        'C:\Program Files (x86)\Git\cmd',
+        'C:\Program Files (x86)\Git\bin'
+    )
+}
+
 function Get-NodeMajorVersion {
     if (-not (Test-Command 'node')) {
         return $null
@@ -420,6 +429,54 @@ function Ensure-Node {
     Write-Info "Node.js ready: $(node -v) ($((Get-Command node).Source))"
 }
 
+function Ensure-Git {
+    Refresh-Path
+    Add-PathEntries (Get-SystemGitDirectories)
+
+    if (Test-Command 'git') {
+        try {
+            Write-Info "Detected Git $((& git --version | Select-Object -Last 1).Trim())"
+        } catch {
+            Write-Info 'Detected Git'
+        }
+        return
+    }
+
+    Write-WarnMsg 'Git not found; installing it because npm may need git to install OpenClaw dependencies'
+    if (Test-Command 'winget') {
+        Write-Info 'Installing Git with winget'
+        winget install --exact --id Git.Git --accept-source-agreements --accept-package-agreements | Out-Null
+    } elseif (Test-Command 'choco') {
+        Write-Info 'Installing Git with Chocolatey'
+        choco install git -y | Out-Null
+    } else {
+        Throw-Fail 'Git is required but winget and choco were not found. Install Git manually first.'
+    }
+
+    Refresh-Path
+    Add-PathEntries (Get-SystemGitDirectories)
+    if (-not (Test-Command 'git')) {
+        Throw-Fail 'Git install finished, but git.exe is still not available in PATH'
+    }
+
+    try {
+        Write-Info "Git ready: $((& git --version | Select-Object -Last 1).Trim())"
+    } catch {
+        Write-Info 'Git ready'
+    }
+}
+
+function Test-NpmGitMissing([string]$Message) {
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    return $Message -match 'spawn git' -or
+        $Message -match 'syscall spawn git' -or
+        $Message -match 'path git' -or
+        $Message -match 'git error occurred'
+}
+
 function Get-InstalledOpenClawVersion {
     if ([string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
         return ''
@@ -461,7 +518,17 @@ function Ensure-OpenClaw {
         Write-Info 'OpenClaw not found; installing'
     }
 
-    Invoke-Npm install -g openclaw@latest
+    try {
+        Invoke-Npm install -g openclaw@latest
+    } catch {
+        if (-not (Test-Command 'git') -or (Test-NpmGitMissing $_.Exception.Message)) {
+            Write-WarnMsg 'npm install reported a missing Git dependency; ensuring Git and retrying once'
+            Ensure-Git
+            Invoke-Npm install -g openclaw@latest
+        } else {
+            throw
+        }
+    }
     Refresh-Path
 
     if ([string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
@@ -1202,6 +1269,7 @@ if ($Uninstall) {
 Prompt-ApiKey
 Prompt-Model
 Ensure-Node
+Ensure-Git
 Choose-GatewayPort
 Ensure-OpenClaw
 Ensure-OpenClawBootstrap
