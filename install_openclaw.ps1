@@ -668,7 +668,7 @@ function Test-UpstreamWithPowerShell {
 }
 
 function Test-UpstreamWithNode {
-    $script = @"
+    $script = @'
 const url = process.argv[1];
 const apiKey = process.argv[2];
 (async () => {
@@ -680,7 +680,7 @@ const apiKey = process.argv[2];
     process.exit(1);
   }
 })();
-"@
+'@
     & node -e $script "$BaseUrl/models" "$ApiKey"
     return $LASTEXITCODE -eq 0
 }
@@ -721,6 +721,71 @@ function Test-GatewayHealth {
     }
 
     return $statusOutput -match 'RPC probe:\s+ok'
+}
+
+function Test-ServiceInstallAccessDenied([string]$Message) {
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    return $Message -match 'Access is denied' -or
+        $Message -match '拒绝访问' -or
+        $Message -match 'schtasks create failed'
+}
+
+function Start-GatewayWithoutService {
+    param(
+        [string]$ConfigPath,
+        [string]$StateDir
+    )
+
+    $openclawPath = Get-OpenClawCommand
+    if ([string]::IsNullOrWhiteSpace($openclawPath)) {
+        Throw-Fail '未找到 openclaw.cmd，无法在无服务模式下启动网关'
+    }
+
+    $stdoutLog = Join-Path $env:TEMP 'openclaw-gateway-stdout.log'
+    $stderrLog = Join-Path $env:TEMP 'openclaw-gateway-stderr.log'
+    Remove-Item -Path $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
+
+    $previousPath = $env:Path
+    $previousPort = $env:OPENCLAW_PORT
+    $previousGatewayPort = $env:OPENCLAW_GATEWAY_PORT
+    $previousConfigPath = $env:OPENCLAW_CONFIG_PATH
+    $previousStateDir = $env:OPENCLAW_STATE_DIR
+    $previousCompileCache = $env:NODE_COMPILE_CACHE
+    $previousNoRespawn = $env:OPENCLAW_NO_RESPAWN
+
+    try {
+        $env:Path = Get-ServicePath
+        $env:OPENCLAW_PORT = [string]$GatewayPort
+        $env:OPENCLAW_GATEWAY_PORT = [string]$GatewayPort
+        $env:OPENCLAW_CONFIG_PATH = $ConfigPath
+        $env:OPENCLAW_STATE_DIR = $StateDir
+        $env:NODE_COMPILE_CACHE = Join-Path $env:TEMP 'openclaw-compile-cache'
+        $env:OPENCLAW_NO_RESPAWN = '1'
+
+        Write-WarnMsg '计划任务安装失败，改为当前用户无服务模式启动网关'
+        Start-Process -FilePath $openclawPath -ArgumentList @('gateway', 'run', '--port', [string]$GatewayPort, '--bind', 'loopback') -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog | Out-Null
+        Start-Sleep -Seconds 5
+    } finally {
+        $env:Path = $previousPath
+        $env:OPENCLAW_PORT = $previousPort
+        $env:OPENCLAW_GATEWAY_PORT = $previousGatewayPort
+        $env:OPENCLAW_CONFIG_PATH = $previousConfigPath
+        $env:OPENCLAW_STATE_DIR = $previousStateDir
+        $env:NODE_COMPILE_CACHE = $previousCompileCache
+        $env:OPENCLAW_NO_RESPAWN = $previousNoRespawn
+    }
+
+    if (-not (Test-GatewayHealth)) {
+        if (Test-Path $stderrLog) {
+            Get-Content -Path $stderrLog -TotalCount 120 | Out-Host
+        }
+        if (Test-Path $stdoutLog) {
+            Get-Content -Path $stdoutLog -TotalCount 120 | Out-Host
+        }
+    }
 }
 
 function Invoke-GatewayForegroundProbe {
@@ -772,7 +837,15 @@ function Repair-GatewayService {
 
     Write-WarnMsg '网关健康检查失败，尝试执行 openclaw doctor --fix 修复服务'
     try { Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir doctor --fix } catch { try { Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir doctor --yes } catch {} }
-    Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
+    try {
+        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
+    } catch {
+        if (Test-ServiceInstallAccessDenied $_.Exception.Message) {
+            Start-GatewayWithoutService -ConfigPath $configPath -StateDir $stateDir
+            return
+        }
+        throw
+    }
     try {
         Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway restart
     } catch {
@@ -786,11 +859,25 @@ function Install-AndStartGateway {
     $stateDir = if ($env:OPENCLAW_STATE_DIR) { $env:OPENCLAW_STATE_DIR } else { Join-Path $HOME '.openclaw' }
 
     Write-Info '安装并启动网关'
-    Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
+    $serviceInstallOk = $true
     try {
-        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway restart
+        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
     } catch {
-        Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway start
+        if (Test-ServiceInstallAccessDenied $_.Exception.Message) {
+            $serviceInstallOk = $false
+        } else {
+            throw
+        }
+    }
+
+    if ($serviceInstallOk) {
+        try {
+            Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway restart
+        } catch {
+            Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway start
+        }
+    } else {
+        Start-GatewayWithoutService -ConfigPath $configPath -StateDir $stateDir
     }
     Start-Sleep -Seconds 3
 
@@ -855,7 +942,7 @@ function Write-OpenClawConfig {
 
     Write-Info "写入 OpenClaw 配置：$configPath"
 
-    $nodeScript = @"
+    $nodeScript = @'
 const fs = require('fs');
 const crypto = require('crypto');
 const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort, enableBrowserToolRaw] = process.argv.slice(1);
@@ -912,7 +999,7 @@ if (typeof config.agents.defaults.memorySearch.provider === 'undefined' && typeo
   config.agents.defaults.memorySearch.fallback = 'none';
 }
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
-"@
+'@
 
     & node -e $nodeScript $configPath $ApiKey $BaseUrl $ProviderId $ModelId "$ModelId (newapi)" $GatewayPort $(if ($EnableBrowserTool) { '1' } else { '0' })
 }
@@ -922,7 +1009,7 @@ function Get-GatewayToken([string]$ConfigPath) {
         return $null
     }
 
-    $nodeScript = @"
+    $nodeScript = @'
 const fs = require('fs');
 const configPath = process.argv[1];
 try {
@@ -932,7 +1019,7 @@ try {
     process.stdout.write(token.trim());
   }
 } catch {}
-"@
+'@
 
     $token = (& node -e $nodeScript $ConfigPath 2>$null | Select-Object -Last 1).Trim()
     if ([string]::IsNullOrWhiteSpace($token)) {
