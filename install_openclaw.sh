@@ -387,8 +387,8 @@ gateway_health_check() {
 }
 
 repair_gateway_service() {
-  warn "网关健康检查失败，尝试执行 openclaw doctor 修复服务"
-  openclaw doctor || true
+  warn "网关健康检查失败，尝试执行 openclaw doctor --yes 自动修复服务"
+  openclaw doctor --yes || true
   openclaw gateway install --runtime node --port "$OPENCLAW_PORT" --force
   openclaw gateway restart || openclaw gateway start || true
 }
@@ -588,6 +588,10 @@ ensure_openclaw_initialized() {
     local gateway_log
     gateway_log="$(gateway_log_path)"
     openclaw gateway status || true
+    if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+      systemctl --user status openclaw-gateway.service --no-pager -l >&2 || true
+      journalctl --user -u openclaw-gateway.service -n 80 --no-pager >&2 || true
+    fi
     [ -f "$gateway_log" ] && tail -n 80 "$gateway_log" >&2 || true
     fail "网关仍未监听 127.0.0.1:${OPENCLAW_PORT}，请检查日志：$gateway_log"
   fi
