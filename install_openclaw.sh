@@ -153,12 +153,24 @@ ensure_homebrew_in_path() {
   return 1
 }
 
+ensure_homebrew_shellenv() {
+  ensure_homebrew_in_path || return 1
+
+  if command -v brew >/dev/null 2>&1; then
+    eval "$(brew shellenv)"
+    return 0
+  fi
+
+  return 1
+}
+
 install_homebrew() {
   ensure_homebrew_in_path && return 0
   ensure_macos_sudo
   log "安装 Homebrew"
   NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ensure_homebrew_in_path || fail "Homebrew 安装失败"
+  ensure_homebrew_shellenv || fail "Homebrew 已安装，但 shell 环境未生效"
 }
 
 install_nvm() {
@@ -178,6 +190,7 @@ install_node_macos() {
   ensure_macos_devtools
   ensure_macos_sudo
   ensure_homebrew_in_path || install_homebrew
+  ensure_homebrew_shellenv || fail "Homebrew 环境初始化失败"
 
   log "通过 Homebrew 安装 Node.js 22"
   brew install node@22
@@ -262,6 +275,111 @@ ensure_npm_global_bin_in_path() {
     *":$prefix/bin:"*) ;;
     *) export PATH="$prefix/bin:$PATH" ;;
   esac
+}
+
+write_service_env() {
+  local config_home env_file service_path npm_prefix node_dir extra_paths cleaned_path
+  config_home="$HOME/.openclaw"
+  env_file="$config_home/.env"
+
+  mkdir -p "$config_home"
+
+  service_path="/usr/local/bin:/usr/bin:/bin"
+  if [ "$OS" = "macos" ]; then
+    service_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+  fi
+
+  npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+  if [ -n "$npm_prefix" ] && [ -d "$npm_prefix/bin" ]; then
+    service_path="$npm_prefix/bin:$service_path"
+  fi
+
+  node_dir="$(dirname "$(command -v node 2>/dev/null || printf '/usr/bin/node')")"
+  if [ -d "$node_dir" ]; then
+    service_path="$node_dir:$service_path"
+  fi
+
+  extra_paths=""
+  if [ "$OS" = "macos" ] && command -v brew >/dev/null 2>&1; then
+    extra_paths="$(brew --prefix 2>/dev/null || true)/bin"
+    if brew list node@22 >/dev/null 2>&1; then
+      extra_paths="$(brew --prefix node@22 2>/dev/null || true)/bin:$extra_paths"
+    fi
+  fi
+
+  cleaned_path="$service_path"
+  if [ -n "$extra_paths" ]; then
+    cleaned_path="$extra_paths:$cleaned_path"
+  fi
+
+  cleaned_path="$(printf '%s' "$cleaned_path" | awk -F: '
+    {
+      out="";
+      for (i=1; i<=NF; i++) {
+        if ($i == "") continue;
+        if (seen[$i]++) continue;
+        out = out (out ? ":" : "") $i;
+      }
+      print out;
+    }')"
+
+  cat > "$env_file" <<EOF
+PATH=$cleaned_path
+OPENCLAW_PORT=$OPENCLAW_PORT
+EOF
+
+  log "已写入服务环境文件：$env_file"
+}
+
+port_is_listening() {
+  local port="$1"
+
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+
+  if command -v nc >/dev/null 2>&1; then
+    nc -z 127.0.0.1 "$port" >/dev/null 2>&1
+    return $?
+  fi
+
+  return 1
+}
+
+choose_gateway_port() {
+  local candidate max_port
+  candidate="${OPENCLAW_PORT:-18789}"
+  max_port=$((candidate + 20))
+
+  while [ "$candidate" -le "$max_port" ]; do
+    if port_is_listening "$candidate"; then
+      warn "端口 $candidate 已被占用，尝试下一个端口"
+      candidate=$((candidate + 1))
+      continue
+    fi
+
+    OPENCLAW_PORT="$candidate"
+    export OPENCLAW_PORT
+    log "将使用网关端口：$OPENCLAW_PORT"
+    return 0
+  done
+
+  fail "未找到可用网关端口，请手动设置 OPENCLAW_PORT"
+}
+
+gateway_log_path() {
+  if [ -f /tmp/openclaw/openclaw-gateway.log ]; then
+    printf '%s\n' '/tmp/openclaw/openclaw-gateway.log'
+    return 0
+  fi
+
+  if [ -f "$HOME/.openclaw/logs/openclaw-gateway.log" ]; then
+    printf '%s\n' "$HOME/.openclaw/logs/openclaw-gateway.log"
+    return 0
+  fi
+
+  printf '%s\n' '/tmp/openclaw/openclaw-gateway.log'
 }
 
 gateway_health_check() {
@@ -467,8 +585,11 @@ ensure_openclaw_initialized() {
   fi
 
   if ! gateway_health_check; then
+    local gateway_log
+    gateway_log="$(gateway_log_path)"
     openclaw gateway status || true
-    fail "网关仍未监听 127.0.0.1:${OPENCLAW_PORT}，请检查 /tmp/openclaw/openclaw-gateway.log"
+    [ -f "$gateway_log" ] && tail -n 80 "$gateway_log" >&2 || true
+    fail "网关仍未监听 127.0.0.1:${OPENCLAW_PORT}，请检查日志：$gateway_log"
   fi
 
   openclaw gateway status || true
@@ -562,7 +683,9 @@ main() {
   prompt_api_key "${1:-}"
   prompt_model
   ensure_node
+  choose_gateway_port
   install_openclaw
+  write_service_env
   verify_upstream_api
   ensure_openclaw_initialized
   write_openclaw_config
