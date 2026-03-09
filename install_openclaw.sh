@@ -44,6 +44,19 @@ run_privileged() {
   fi
 }
 
+ensure_macos_sudo() {
+  [ "$OS" = "macos" ] || return 0
+
+  if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    return 0
+  fi
+
+  command -v sudo >/dev/null 2>&1 || fail "当前系统缺少 sudo，无法自动安装所需依赖"
+
+  log "需要管理员权限以安装 Homebrew / Node.js，请按提示输入 macOS 登录密码"
+  sudo -v || fail "sudo 验证失败，请确认当前账号具有管理员权限"
+}
+
 detect_platform() {
   case "$(uname -s)" in
     Linux) OS="linux" ;;
@@ -142,6 +155,7 @@ ensure_homebrew_in_path() {
 
 install_homebrew() {
   ensure_homebrew_in_path && return 0
+  ensure_macos_sudo
   log "安装 Homebrew"
   NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
   ensure_homebrew_in_path || fail "Homebrew 安装失败"
@@ -162,6 +176,7 @@ install_nvm() {
 install_node_macos() {
   log "在 macOS 上准备 Node.js 22"
   ensure_macos_devtools
+  ensure_macos_sudo
   ensure_homebrew_in_path || install_homebrew
 
   log "通过 Homebrew 安装 Node.js 22"
