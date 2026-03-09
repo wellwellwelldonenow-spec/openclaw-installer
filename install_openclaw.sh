@@ -11,6 +11,7 @@ BASE_URL="https://newapi.megabyai.cc/v1"
 MODEL_ID_DEFAULT="gpt-5.3-codex"
 MODEL_ID="${OPENCLAW_MODEL_ID:-$MODEL_ID_DEFAULT}"
 MODEL_NAME="${MODEL_ID} (newapi)"
+ENABLE_BROWSER_TOOL="${OPENCLAW_ENABLE_BROWSER_TOOL:-0}"
 OS=""
 ARCH=""
 TEMP_SWAP_FILE="/var/tmp/openclaw-installer.swap"
@@ -1439,11 +1440,12 @@ write_openclaw_config() {
   fi
 
   log "写入 OpenClaw 配置：$config_path"
-  node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" "$OPENCLAW_PORT" <<'NODE'
+  node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" "$OPENCLAW_PORT" "$ENABLE_BROWSER_TOOL" <<'NODE'
 const fs = require('fs');
 const crypto = require('crypto');
 
-const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort] = process.argv.slice(2);
+const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort, enableBrowserToolRaw] = process.argv.slice(2);
+const enableBrowserTool = enableBrowserToolRaw === '1';
 
 let config = {};
 if (fs.existsSync(configPath)) {
@@ -1488,6 +1490,16 @@ if (typeof config.gateway.auth.token !== 'string' || !config.gateway.auth.token.
 if (!config.gateway.auth.mode || (config.gateway.auth.mode === 'password' && !config.gateway.auth.password)) {
   config.gateway.auth.mode = 'token';
 }
+
+config.tools = config.tools || {};
+const denyList = Array.isArray(config.tools.deny) ? config.tools.deny.filter((entry) => typeof entry === 'string' && entry.trim()) : [];
+const denySet = new Set(denyList);
+if (enableBrowserTool) {
+  denySet.delete('browser');
+} else {
+  denySet.add('browser');
+}
+config.tools.deny = Array.from(denySet);
 
 config.agents = config.agents || {};
 config.agents.defaults = config.agents.defaults || {};
@@ -1748,6 +1760,13 @@ main() {
 - 网关端口：$OPENCLAW_PORT
 - Provider：$PROVIDER_ID
 - Model：$MODEL_ID
+- Browser tool：$(
+  if [ "$ENABLE_BROWSER_TOOL" = "1" ]; then
+    printf '%s' 'enabled'
+  else
+    printf '%s' 'disabled (OPENCLAW_ENABLE_BROWSER_TOOL=1 可开启)'
+  fi
+)
 - Dashboard：http://127.0.0.1:$OPENCLAW_PORT/
 - Gateway token：$(gateway_auth_token "$config_path" 2>/dev/null || printf '%s' '未读取到，请执行 openclaw config get gateway.auth.token')
 

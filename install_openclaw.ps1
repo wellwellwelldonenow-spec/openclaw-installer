@@ -12,6 +12,7 @@ $GatewayPortInput = if ($PSBoundParameters.ContainsKey('GatewayPort') -or -not [
 $ProviderId = 'megabyai'
 $BaseUrl = 'https://newapi.megabyai.cc/v1'
 $DefaultModelId = 'gpt-5.3-codex'
+$EnableBrowserTool = $env:OPENCLAW_ENABLE_BROWSER_TOOL -eq '1'
 
 function Initialize-ConsoleEncoding {
     try {
@@ -851,7 +852,8 @@ function Write-OpenClawConfig {
     $nodeScript = @"
 const fs = require('fs');
 const crypto = require('crypto');
-const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort] = process.argv.slice(1);
+const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort, enableBrowserToolRaw] = process.argv.slice(1);
+const enableBrowserTool = enableBrowserToolRaw === '1';
 let config = {};
 if (fs.existsSync(configPath)) {
   const raw = fs.readFileSync(configPath, 'utf8').trim();
@@ -881,6 +883,15 @@ if (typeof config.gateway.auth.token !== 'string' || !config.gateway.auth.token.
 if (!config.gateway.auth.mode || (config.gateway.auth.mode === 'password' && !config.gateway.auth.password)) {
   config.gateway.auth.mode = 'token';
 }
+config.tools = config.tools || {};
+const denyList = Array.isArray(config.tools.deny) ? config.tools.deny.filter((entry) => typeof entry === 'string' && entry.trim()) : [];
+const denySet = new Set(denyList);
+if (enableBrowserTool) {
+  denySet.delete('browser');
+} else {
+  denySet.add('browser');
+}
+config.tools.deny = Array.from(denySet);
 config.agents = config.agents || {};
 config.agents.defaults = config.agents.defaults || {};
 config.agents.defaults.model = config.agents.defaults.model || {};
@@ -897,7 +908,7 @@ if (typeof config.agents.defaults.memorySearch.provider === 'undefined' && typeo
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 "@
 
-    & node -e $nodeScript $configPath $ApiKey $BaseUrl $ProviderId $ModelId "$ModelId (newapi)" $GatewayPort
+    & node -e $nodeScript $configPath $ApiKey $BaseUrl $ProviderId $ModelId "$ModelId (newapi)" $GatewayPort $(if ($EnableBrowserTool) { '1' } else { '0' })
 }
 
 function Get-GatewayToken([string]$ConfigPath) {
@@ -1084,6 +1095,7 @@ Write-Host "- OpenClaw 已安装并初始化"
 Write-Host "- 网关端口：$GatewayPort"
 Write-Host "- Provider：$ProviderId"
 Write-Host "- Model：$ModelId"
+Write-Host "- Browser tool：$(if ($EnableBrowserTool) { 'enabled' } else { 'disabled (set OPENCLAW_ENABLE_BROWSER_TOOL=1 to enable)' })"
 Write-Host "- Dashboard：http://127.0.0.1:$GatewayPort/"
 Write-Host "- Gateway token：$(if ($token = Get-GatewayToken $configPath) { $token } else { '未读取到，请执行 openclaw config get gateway.auth.token' })"
 Write-Host ''
