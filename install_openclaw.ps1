@@ -311,21 +311,36 @@ function Invoke-NativeCommandSafe {
         [string[]]$Arguments
     )
 
+    $stdoutPath = Join-Path $env:TEMP ("openclaw-native-stdout-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+    $stderrPath = Join-Path $env:TEMP ("openclaw-native-stderr-{0}.log" -f ([guid]::NewGuid().ToString('N')))
     $hasNativeErrorPreference = $null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+    $previousErrorActionPreference = $ErrorActionPreference
     if ($hasNativeErrorPreference) {
         $previousNativeErrorPreference = $script:PSNativeCommandUseErrorActionPreference
     }
 
     try {
+        $ErrorActionPreference = 'Continue'
         if ($hasNativeErrorPreference) {
             $script:PSNativeCommandUseErrorActionPreference = $false
         }
 
-        $output = & $CommandPath @Arguments 2>&1
+        & $CommandPath @Arguments 1>"$stdoutPath" 2>"$stderrPath"
         $exitCode = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
         if ($hasNativeErrorPreference) {
             $script:PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+        }
+    }
+
+    $output = New-Object System.Collections.Generic.List[string]
+    foreach ($path in @($stdoutPath, $stderrPath)) {
+        if (Test-Path $path) {
+            foreach ($line in (Get-Content -Path $path -ErrorAction SilentlyContinue)) {
+                $output.Add($line)
+            }
+            Remove-Item -Force $path -ErrorAction SilentlyContinue
         }
     }
 
