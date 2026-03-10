@@ -18,8 +18,8 @@
 - 自动写入 `https://newapi.megabyai.cc/v1` 的 OpenAI 兼容配置
 - 自动设置默认模型为 `megabyai/<你的模型ID>`
 - 自动写入 `OPENCLAW_GATEWAY_PORT`、`OPENCLAW_CONFIG_PATH`、`OPENCLAW_STATE_DIR` 到服务环境
-- 默认启用 `browser` tool，并自动探测上游是否支持 `openai-responses`
-- 如果上游支持 `/responses`，自动优先使用 `openai-responses` 以获得更好的工具兼容性
+- 默认启用 `browser` tool，并默认使用 `openai-responses`
+- 如需切回 `openai-completions`，可通过 `OPENCLAW_PROVIDER_API` 手动覆盖
 - 上游接口自动校验，优先使用系统请求栈，失败时自动回退到 `Node.js` TLS 栈
 - 网关健康检查失败时自动执行 `openclaw doctor --fix` 并重装服务后重试
 - 失败时自动输出 `gateway status --deep`、`status --all`、日志和一次前台启动诊断
@@ -169,7 +169,7 @@ Remove-Item -Recurse -Force "$HOME\.openclaw"
 - 自动写入 `~/.openclaw/.env`，把 `PATH`、`OPENCLAW_PORT`、`OPENCLAW_CONFIG_PATH` 固定给后台服务
 - 避免 `launchd` 因 `nvm`/shell PATH 导致网关无法拉起
 - 默认在未配置 embedding provider 时关闭 `memorySearch`，避免无意义告警
-- 默认启用 `browser` tool；安装脚本会自动探测并优先使用 `openai-responses`
+- 默认启用 `browser` tool；安装脚本默认使用 `openai-responses`
 
 ## Windows / WSL2 说明
 
@@ -271,13 +271,13 @@ iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-in
 & $script
 ```
 
-- `bash` 版跳过上游接口探测：
+- `bash` 版跳过基础上游连通性校验：
 
 ```bash
 OPENCLAW_SKIP_UPSTREAM_CHECK=1 bash /tmp/install_openclaw.sh
 ```
 
-- `PowerShell` 版跳过上游接口探测：
+- `PowerShell` 版跳过基础上游连通性校验：
 
 ```powershell
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'

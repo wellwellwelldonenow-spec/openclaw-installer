@@ -1539,19 +1539,12 @@ resolve_provider_api_mode() {
     auto|'')
       ;;
     *)
-      warn "Unknown OPENCLAW_PROVIDER_API=$REQUESTED_PROVIDER_API, falling back to auto detection"
+      warn "Unknown OPENCLAW_PROVIDER_API=$REQUESTED_PROVIDER_API, defaulting to openai-responses"
       ;;
   esac
 
-  log "Probing upstream API mode"
-  if probe_responses_api_with_curl || probe_responses_api_with_node; then
-    RESOLVED_PROVIDER_API="openai-responses"
-    log "Detected /responses support; using $RESOLVED_PROVIDER_API"
-    return 0
-  fi
-
-  RESOLVED_PROVIDER_API="openai-completions"
-  warn "Responses API probe failed; falling back to $RESOLVED_PROVIDER_API"
+  RESOLVED_PROVIDER_API="openai-responses"
+  log "Defaulting to $RESOLVED_PROVIDER_API"
 }
 
 bootstrap_openclaw() {

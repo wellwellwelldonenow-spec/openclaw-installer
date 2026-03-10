@@ -1659,19 +1659,12 @@ function Resolve-UpstreamProviderApi {
         }
         'auto' { }
         default {
-            Write-WarnMsg "Unknown OPENCLAW_PROVIDER_API=$RequestedProviderApi, falling back to auto detection"
+            Write-WarnMsg "Unknown OPENCLAW_PROVIDER_API=$RequestedProviderApi, defaulting to openai-responses"
         }
     }
 
-    Write-Info 'Probing upstream API mode'
-    if ((Test-ResponsesWithPowerShell) -or (Test-ResponsesWithNode)) {
-        $script:ResolvedProviderApi = 'openai-responses'
-        Write-Info "Detected /responses support; using $ResolvedProviderApi"
-        return
-    }
-
-    $script:ResolvedProviderApi = 'openai-completions'
-    Write-WarnMsg "Responses API probe failed; falling back to $ResolvedProviderApi"
+    $script:ResolvedProviderApi = 'openai-responses'
+    Write-Info "Defaulting to $ResolvedProviderApi"
 }
 
 function Test-GatewayHealth {
