@@ -91,8 +91,8 @@ bash /tmp/channel_setup.sh telegram --token "YOUR_BOT_TOKEN" --user-id "YOUR_CHA
 ```powershell
 $script = Join-Path $env:TEMP 'channel_setup.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.ps1 -OutFile $script
-& $script
-& $script -Channel telegram -Token "YOUR_BOT_TOKEN" -UserId "YOUR_CHAT_ID" -Test
+powershell -NoProfile -ExecutionPolicy Bypass -File $script
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel telegram -Token "YOUR_BOT_TOKEN" -UserId "YOUR_CHAT_ID" -Test
 ```
 
 Supported channels:
@@ -115,10 +115,10 @@ bash /tmp/channel_setup.sh whatsapp
 ```
 
 ```powershell
-& $script -Channel discord -Token "YOUR_BOT_TOKEN" -ChannelId "YOUR_CHANNEL_ID" -Test
-& $script -Channel slack -BotToken "YOUR_XOXB_TOKEN" -AppToken "YOUR_XAPP_TOKEN" -Test
-& $script -Channel feishu -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
-& $script -Channel whatsapp
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel discord -Token "YOUR_BOT_TOKEN" -ChannelId "YOUR_CHANNEL_ID" -Test
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel slack -BotToken "YOUR_XOXB_TOKEN" -AppToken "YOUR_XAPP_TOKEN" -Test
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel feishu -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel whatsapp
 ```
 
 The channel setup scripts try to:
@@ -144,7 +144,7 @@ curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-i
 ```powershell
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
-& $script -Uninstall
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -Uninstall
 ```
 
 如果要做“纯净重装”，卸载后再删除用户态数据：
@@ -257,7 +257,7 @@ OPENCLAW_PROVIDER_API=openai-completions bash /tmp/install_openclaw.sh
 $env:OPENCLAW_PROVIDER_API = 'openai-responses'
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
-& $script
+powershell -NoProfile -ExecutionPolicy Bypass -File $script
 ```
 
 - 禁用 `browser` tool：
@@ -270,7 +270,7 @@ OPENCLAW_ENABLE_BROWSER_TOOL=0 bash /tmp/install_openclaw.sh
 $env:OPENCLAW_ENABLE_BROWSER_TOOL = '0'
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
-& $script
+powershell -NoProfile -ExecutionPolicy Bypass -File $script
 ```
 
 - `bash` 版跳过基础上游连通性校验：
@@ -284,5 +284,5 @@ OPENCLAW_SKIP_UPSTREAM_CHECK=1 bash /tmp/install_openclaw.sh
 ```powershell
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
-& $script -SkipUpstreamCheck
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -SkipUpstreamCheck
 ```
