@@ -1971,13 +1971,18 @@ function Stop-OpenClawProcesses {
     $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
         $commandLine = $_.CommandLine
         $executablePath = $_.ExecutablePath
+        $isInstallerProcess = $commandLine -and (
+            $commandLine -match 'install_openclaw\.ps1' -or
+            $commandLine -match 'install_openclaw\.sh'
+        )
 
-        ($commandLine -and (
+        -not $isInstallerProcess -and ((
+            $commandLine -and (
             $commandLine -match '(^|[^a-z])openclaw([^a-z]|$)' -or
             $commandLine -match '\\node_modules\\openclaw\\' -or
             $commandLine -match '\\\.openclaw\\'
-        )) -or
-        ($executablePath -and $executablePath -match 'openclaw(\.cmd)?$')
+            )) -or
+            ($executablePath -and $executablePath -match 'openclaw(\.cmd)?$'))
     }
 
     foreach ($process in $processes) {
