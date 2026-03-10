@@ -12,6 +12,7 @@ $GatewayPortInput = if ($PSBoundParameters.ContainsKey('GatewayPort') -or -not [
 $ProviderId = 'megabyai'
 $BaseUrl = 'https://newapi.megabyai.cc/v1'
 $DefaultModelId = 'gpt-5.3-codex'
+$OfficialWindowsInstallUrl = 'https://openclaw.ai/install.ps1'
 $EnableBrowserTool = $env:OPENCLAW_ENABLE_BROWSER_TOOL -ne '0'
 $SkipServiceInstall = $false
 
@@ -299,6 +300,7 @@ function Get-OpenClawCommand {
     return Resolve-CliShim -BaseName 'openclaw' -PreferredPaths @(
         'C:\Program Files\nodejs\openclaw.cmd',
         'C:\Program Files (x86)\nodejs\openclaw.cmd',
+        (Join-Path $env:APPDATA 'npm\openclaw.cmd'),
         (Join-Path $HOME '.npm-global\openclaw.cmd')
     )
 }
@@ -487,52 +489,6 @@ function Prefer-SystemNodePath {
     return $false
 }
 
-function Ensure-Node {
-    Prefer-SystemNodePath | Out-Null
-
-    $major = Get-NodeMajorVersion
-    $needsInstall = $false
-
-    if ($major -ge 22) {
-        if (-not (Test-ServiceSafeNodePath)) {
-            Write-WarnMsg "Current Node.js path is not service-safe on Windows: $((Get-Command node).Source). Switching to system Node.js 22+"
-            $needsInstall = $true
-        } else {
-            Write-Info "Detected Node.js $(node -v)"
-        }
-    } elseif ($major) {
-        Write-WarnMsg "Current Node.js version is too old: $(node -v). Upgrading to 22+"
-        $needsInstall = $true
-    } else {
-        Write-WarnMsg 'Node.js not found; installing 22+ automatically'
-        $needsInstall = $true
-    }
-
-    if ($needsInstall) {
-        if (Test-Command 'winget') {
-            Write-Info 'Installing Node.js with winget'
-            winget install --exact --id OpenJS.NodeJS --accept-source-agreements --accept-package-agreements | Out-Null
-        } elseif (Test-Command 'choco') {
-            Write-Info 'Installing Node.js with Chocolatey'
-            choco install nodejs -y | Out-Null
-        } else {
-            Throw-Fail 'winget and choco were not found. Install Node.js 22+ manually first.'
-        }
-    }
-
-    Refresh-Path
-    Add-PathEntries (Get-SystemNodeDirectories)
-    $major = Get-NodeMajorVersion
-    if ($major -lt 22) {
-        Throw-Fail "Node.js version is still below 22 after install: $(node -v)"
-    }
-    if (-not (Test-ServiceSafeNodePath)) {
-        Throw-Fail "Still not using a system Node.js path: $((Get-Command node).Source)"
-    }
-
-    Write-Info "Node.js ready: $(node -v) ($((Get-Command node).Source))"
-}
-
 function Ensure-Git {
     Refresh-Path
     Add-PathEntries (Get-SystemGitDirectories)
@@ -605,6 +561,82 @@ function Get-LatestOpenClawVersion {
     }
 }
 
+function Get-PowerShellExecutable {
+    foreach ($candidate in @(
+        (Join-Path $PSHOME 'powershell.exe'),
+        (Join-Path $PSHOME 'pwsh.exe'),
+        'powershell.exe',
+        'pwsh.exe'
+    )) {
+        try {
+            $command = Get-Command $candidate -ErrorAction SilentlyContinue
+            if ($null -ne $command -and -not [string]::IsNullOrWhiteSpace($command.Source)) {
+                return $command.Source
+            }
+        } catch {}
+    }
+
+    return $null
+}
+
+function Invoke-OfficialWindowsInstaller {
+    $installerPath = Join-Path $env:TEMP ("openclaw-official-install-{0}.ps1" -f ([guid]::NewGuid().ToString('N')))
+    $hostPowerShell = Get-PowerShellExecutable
+    if ([string]::IsNullOrWhiteSpace($hostPowerShell)) {
+        Throw-Fail 'PowerShell executable not found; cannot run official Windows installer'
+    }
+
+    try {
+        Write-Info "Installing OpenClaw with official script: $OfficialWindowsInstallUrl"
+        $requestParams = @{
+            Uri = $OfficialWindowsInstallUrl
+            OutFile = $installerPath
+        }
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            $requestParams.UseBasicParsing = $true
+        }
+        Invoke-WebRequest @requestParams
+        & $hostPowerShell -NoProfile -ExecutionPolicy Bypass -File $installerPath
+        $officialExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { [int]$LASTEXITCODE }
+        if ($officialExitCode -ne 0) {
+            Throw-Fail "Official OpenClaw installer exited with code $officialExitCode"
+        }
+    } finally {
+        Remove-Item -Path $installerPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Ensure-NodeForOpenClaw {
+    Prefer-SystemNodePath | Out-Null
+
+    $major = Get-NodeMajorVersion
+    if ($major -ge 22) {
+        Write-Info "Detected Node.js $(node -v)"
+        return
+    }
+
+    Throw-Fail 'Node.js 22+ is still unavailable after installation. Use https://openclaw.ai/install.ps1, or install Node.js 22+ and retry.'
+}
+
+function Install-OpenClawWithNpm {
+    if ([string]::IsNullOrWhiteSpace((Get-NpmCommand))) {
+        Throw-Fail 'npm.cmd not found; skip npm fallback'
+    }
+
+    Write-Info 'Falling back to npm install -g openclaw@latest'
+    try {
+        Invoke-Npm install -g openclaw@latest
+    } catch {
+        if (-not (Test-Command 'git') -or (Test-NpmGitMissing $_.Exception.Message)) {
+            Write-WarnMsg 'npm install reported a missing Git dependency; ensuring Git and retrying once'
+            Ensure-Git
+            Invoke-Npm install -g openclaw@latest
+        } else {
+            throw
+        }
+    }
+}
+
 function Ensure-OpenClaw {
     Write-Info 'Installing OpenClaw'
     Refresh-Path
@@ -630,23 +662,43 @@ function Ensure-OpenClaw {
         Write-Info 'OpenClaw not found; installing'
     }
 
+    $installMessages = New-Object System.Collections.Generic.List[string]
     try {
-        Invoke-Npm install -g openclaw@latest
+        Invoke-OfficialWindowsInstaller
     } catch {
-        if (-not (Test-Command 'git') -or (Test-NpmGitMissing $_.Exception.Message)) {
-            Write-WarnMsg 'npm install reported a missing Git dependency; ensuring Git and retrying once'
-            Ensure-Git
-            Invoke-Npm install -g openclaw@latest
-        } else {
-            throw
+        $installMessages.Add("official installer failed: $($_.Exception.Message)")
+        Write-WarnMsg "Official installer failed: $($_.Exception.Message)"
+    }
+
+    Refresh-Path
+    Add-PathEntries (Get-SystemNodeDirectories)
+    $currentVersion = Get-InstalledOpenClawVersion
+
+    if (
+        [string]::IsNullOrWhiteSpace((Get-OpenClawCommand)) -or
+        ($latestVersion -and [string]::IsNullOrWhiteSpace($currentVersion)) -or
+        ($latestVersion -and $currentVersion -and $currentVersion -ne $latestVersion)
+    ) {
+        try {
+            Install-OpenClawWithNpm
+        } catch {
+            $installMessages.Add("npm fallback failed: $($_.Exception.Message)")
+            Write-WarnMsg "npm fallback failed: $($_.Exception.Message)"
         }
     }
+
     Refresh-Path
+    Add-PathEntries (Get-SystemNodeDirectories)
 
     if ([string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
-        Throw-Fail 'OpenClaw command not found after installation'
+        $details = ($installMessages | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ' | '
+        if ([string]::IsNullOrWhiteSpace($details)) {
+            $details = 'no installer output captured'
+        }
+        Throw-Fail "OpenClaw command not found after installation. Recommended Windows paths: 1) iwr -useb https://openclaw.ai/install.ps1 | iex 2) npm install -g openclaw@latest 3) WSL2 Ubuntu. Details: $details"
     }
 
+    Ensure-NodeForOpenClaw
     Write-Info "OpenClaw version: $(((Invoke-OpenClaw --version) | Select-Object -Last 1).Trim())"
 }
 
@@ -1409,18 +1461,6 @@ function Remove-OpenClawState {
     }
 }
 
-function Remove-ScriptInstalledNode {
-    if (-not (Test-ServiceSafeNodePath)) {
-        return
-    }
-
-    if (Test-Command 'winget') {
-        winget uninstall --exact --id OpenJS.NodeJS --accept-source-agreements *> $null
-    } elseif (Test-Command 'choco') {
-        choco uninstall nodejs -y *> $null
-    }
-}
-
 function Invoke-Uninstall {
     Write-Info 'Removing OpenClaw and script-created environment'
     Stop-OpenClawProcesses
@@ -1428,7 +1468,6 @@ function Invoke-Uninstall {
     Stop-OpenClawProcesses
     Remove-OpenClawPackage
     Remove-OpenClawState
-    Remove-ScriptInstalledNode
     Write-Info 'Uninstall complete'
 }
 
@@ -1447,8 +1486,6 @@ if ($Uninstall) {
 
 Prompt-ApiKey
 Prompt-Model
-Ensure-Node
-Ensure-Git
 Choose-GatewayPort
 Ensure-OpenClaw
 Ensure-OpenClawBootstrap

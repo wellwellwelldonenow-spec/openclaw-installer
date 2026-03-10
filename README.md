@@ -22,7 +22,17 @@
 - 失败时自动输出 `gateway status --deep`、`status --all`、日志和一次前台启动诊断
 - 检测端口占用，自动尝试切换到下一个可用端口
 
-## Windows PowerShell 一键执行
+## Windows 安装
+
+本仓库的 Windows 安装逻辑只调整 `OpenClaw` 的安装方式，不改第三方 API、模型和 Gateway 配置写入逻辑。
+
+脚本内部现在按以下顺序处理 Windows 原生安装：
+
+1. 官方安装脚本（推荐）
+2. npm 全局安装
+3. WSL2 Ubuntu（强烈推荐，适合更稳定的本地 Gateway）
+
+### 本仓库一键执行
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 | iex
@@ -33,13 +43,25 @@ iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-in
 - `Windows PowerShell`
 - `PowerShell 7` on Windows
 
-脚本会自动使用 Windows 专用流程：
+脚本会自动使用新的 Windows 专用流程：
 
-- 优先尝试 `winget` 安装 Node.js
-- 回退到 `choco` 安装 Node.js
+- 优先调用官方安装脚本：`iwr -useb https://openclaw.ai/install.ps1 | iex`
+- 如果官方脚本失败，再回退到：`npm install -g openclaw@latest`
 - 写入 `%USERPROFILE%\.openclaw\.env`
 - 安装/升级 `openclaw`
 - 初始化并修复 Gateway
+
+### 方法一：使用官方安装脚本（推荐）
+
+```powershell
+iwr -useb https://openclaw.ai/install.ps1 | iex
+```
+
+### 方法二：使用 npm 安装
+
+```powershell
+npm install -g openclaw@latest
+```
 
 ## macOS / Linux / WSL2 一键执行
 
@@ -90,10 +112,45 @@ Remove-Item -Recurse -Force "$HOME\.openclaw"
 
 ## Windows / WSL2 说明
 
-- 原生 Windows PowerShell 请使用 `install_openclaw.ps1`
+- 原生 Windows PowerShell 推荐顺序：官方 `install.ps1` -> `npm install -g openclaw@latest`
 - 如果你更偏向 Linux 体验，推荐 `WSL2 Ubuntu`
-- 在 `WSL2` 中运行本仓库脚本时，流程与 Linux 一致
+- 在 `WSL2` 中如果你只安装 OpenClaw，可直接运行：`curl -fsSL https://openclaw.ai/install.sh | bash`
+- 在 `WSL2` 中如果你还需要本仓库自动写入第三方 API 配置，继续使用 `install_openclaw.sh`
 - Windows 宿主机访问 WSL2 Gateway 时，优先尝试：`http://localhost:18789/`
+
+### 方法三：使用 WSL2（强烈推荐）
+
+1. 安装 `WSL2 Ubuntu`
+
+```powershell
+wsl --install
+```
+
+重启电脑后完成 Ubuntu 初始化。
+
+2. 在 `WSL2` 中安装 OpenClaw
+
+```bash
+sudo apt update && sudo apt upgrade -y
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+curl -fsSL https://openclaw.ai/install.sh | bash
+```
+
+3. 启动 Gateway
+
+```bash
+openclaw gateway status
+openclaw gateway --port 18789
+openclaw gateway restart
+```
+
+4. 验证安装
+
+```bash
+openclaw status
+openclaw health
+```
 
 ## 常见排查
 
