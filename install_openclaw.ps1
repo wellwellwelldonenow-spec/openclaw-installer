@@ -1388,8 +1388,8 @@ function Remove-OpenClawPackage {
 function Remove-GatewayTask {
     foreach ($taskName in @('OpenClaw Gateway')) {
         if (Test-Command 'schtasks') {
-            schtasks /End /TN $taskName *> $null
-            schtasks /Delete /TN $taskName /F *> $null
+            try { schtasks /End /TN $taskName *> $null } catch {}
+            try { schtasks /Delete /TN $taskName /F *> $null } catch {}
         }
     }
 
