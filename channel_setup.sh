@@ -32,6 +32,7 @@ fail() {
 show_usage() {
   cat <<'EOF'
 Usage:
+  bash channel_setup.sh
   bash channel_setup.sh <channel> [options]
   bash channel_setup.sh --channel <channel> [options]
 
@@ -45,7 +46,7 @@ Supported channels:
   imessage
 
 General options:
-  --config-path <path>   Override OpenClaw config path
+  --config-path "PATH_TO_CONFIG"   Override OpenClaw config path
   --restart              Restart gateway after changes (default)
   --no-restart           Do not restart gateway
   --test                 Run a basic channel credential test when supported
@@ -62,10 +63,11 @@ Channel-specific options:
   --plugin-id <id>       WeChat plugin id (default: wechat)
 
 Examples:
-  bash channel_setup.sh telegram --token <bot-token> --user-id <chat-id> --test
-  bash channel_setup.sh discord --token <bot-token> --channel-id <channel-id> --test
-  bash channel_setup.sh slack --bot-token <xoxb-token> --app-token <xapp-token> --test
-  bash channel_setup.sh feishu --app-id <app-id> --app-secret <app-secret> --test
+  bash channel_setup.sh
+  bash channel_setup.sh telegram --token "YOUR_BOT_TOKEN" --user-id "YOUR_CHAT_ID" --test
+  bash channel_setup.sh discord --token "YOUR_BOT_TOKEN" --channel-id "YOUR_CHANNEL_ID" --test
+  bash channel_setup.sh slack --bot-token "YOUR_XOXB_TOKEN" --app-token "YOUR_XAPP_TOKEN" --test
+  bash channel_setup.sh feishu --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
   bash channel_setup.sh whatsapp --restart
   bash channel_setup.sh wechat --plugin-id wechat
   bash channel_setup.sh imessage

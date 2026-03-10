@@ -82,7 +82,8 @@ curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-i
 - macOS / Linux / WSL2:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.sh -o /tmp/channel_setup.sh && bash /tmp/channel_setup.sh telegram --token <bot-token> --user-id <chat-id> --test
+curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.sh -o /tmp/channel_setup.sh && bash /tmp/channel_setup.sh
+bash /tmp/channel_setup.sh telegram --token "YOUR_BOT_TOKEN" --user-id "YOUR_CHAT_ID" --test
 ```
 
 - Windows PowerShell:
@@ -90,7 +91,8 @@ curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-i
 ```powershell
 $script = Join-Path $env:TEMP 'channel_setup.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.ps1 -OutFile $script
-& $script -Channel telegram -Token <bot-token> -UserId <chat-id> -Test
+& $script
+& $script -Channel telegram -Token "YOUR_BOT_TOKEN" -UserId "YOUR_CHAT_ID" -Test
 ```
 
 Supported channels:
@@ -106,16 +108,16 @@ Supported channels:
 Examples:
 
 ```bash
-bash /tmp/channel_setup.sh discord --token <bot-token> --channel-id <channel-id> --test
-bash /tmp/channel_setup.sh slack --bot-token <xoxb-token> --app-token <xapp-token> --test
-bash /tmp/channel_setup.sh feishu --app-id <app-id> --app-secret <app-secret> --test
+bash /tmp/channel_setup.sh discord --token "YOUR_BOT_TOKEN" --channel-id "YOUR_CHANNEL_ID" --test
+bash /tmp/channel_setup.sh slack --bot-token "YOUR_XOXB_TOKEN" --app-token "YOUR_XAPP_TOKEN" --test
+bash /tmp/channel_setup.sh feishu --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
 bash /tmp/channel_setup.sh whatsapp
 ```
 
 ```powershell
-& $script -Channel discord -Token <bot-token> -ChannelId <channel-id> -Test
-& $script -Channel slack -BotToken <xoxb-token> -AppToken <xapp-token> -Test
-& $script -Channel feishu -AppId <app-id> -AppSecret <app-secret> -Test
+& $script -Channel discord -Token "YOUR_BOT_TOKEN" -ChannelId "YOUR_CHANNEL_ID" -Test
+& $script -Channel slack -BotToken "YOUR_XOXB_TOKEN" -AppToken "YOUR_XAPP_TOKEN" -Test
+& $script -Channel feishu -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
 & $script -Channel whatsapp
 ```
 

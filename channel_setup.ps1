@@ -45,10 +45,11 @@ function Throw-Fail([string]$Message) {
 function Show-Usage {
     @'
 Usage:
-  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel telegram -Token <bot-token> -UserId <chat-id> -Test
-  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel discord -Token <bot-token> -ChannelId <channel-id> -Test
-  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel slack -BotToken <xoxb-token> -AppToken <xapp-token> -Test
-  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel feishu -AppId <app-id> -AppSecret <app-secret> -Test
+  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1
+  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel telegram -Token "YOUR_BOT_TOKEN" -UserId "YOUR_CHAT_ID" -Test
+  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel discord -Token "YOUR_BOT_TOKEN" -ChannelId "YOUR_CHANNEL_ID" -Test
+  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel slack -BotToken "YOUR_XOXB_TOKEN" -AppToken "YOUR_XAPP_TOKEN" -Test
+  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel feishu -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel whatsapp
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel wechat -PluginId wechat
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel imessage
@@ -57,7 +58,7 @@ Supported channels:
   telegram, discord, slack, feishu, whatsapp, wechat, imessage
 
 Options:
-  -ConfigPath <path>   Override OpenClaw config path
+  -ConfigPath "PATH_TO_CONFIG"   Override OpenClaw config path
   -NoRestart           Skip gateway restart
   -Test                Run a basic credential test when supported
 '@ | Write-Host
