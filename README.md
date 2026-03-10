@@ -38,6 +38,7 @@
 ### 本仓库一键执行
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 | iex
 ```
 
@@ -62,6 +63,7 @@ iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-in
 ### 方法一：使用官方安装脚本（推荐）
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 iwr -useb https://openclaw.ai/install.ps1 | iex
 ```
 
@@ -89,6 +91,7 @@ bash /tmp/channel_setup.sh telegram --token "YOUR_BOT_TOKEN" --user-id "YOUR_CHA
 - Windows PowerShell:
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 $script = Join-Path $env:TEMP 'channel_setup.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.ps1 -OutFile $script
 powershell -NoProfile -ExecutionPolicy Bypass -File $script
@@ -115,6 +118,7 @@ bash /tmp/channel_setup.sh whatsapp
 ```
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel discord -Token "YOUR_BOT_TOKEN" -ChannelId "YOUR_CHANNEL_ID" -Test
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel slack -BotToken "YOUR_XOXB_TOKEN" -AppToken "YOUR_XAPP_TOKEN" -Test
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel feishu -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
@@ -142,6 +146,7 @@ curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-i
 - Windows PowerShell：
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Uninstall
@@ -187,6 +192,7 @@ Remove-Item -Recurse -Force "$HOME\.openclaw"
 1. 安装 `WSL2 Ubuntu`
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 wsl --install
 ```
 
@@ -236,6 +242,7 @@ lsof -nP -iTCP:18789 -sTCP:LISTEN
 - Windows PowerShell:
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 Get-NetTCPConnection -LocalPort 18789 -State Listen
 ```
 
@@ -254,6 +261,7 @@ OPENCLAW_PROVIDER_API=openai-completions bash /tmp/install_openclaw.sh
 ```
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 $env:OPENCLAW_PROVIDER_API = 'openai-responses'
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
@@ -267,6 +275,7 @@ OPENCLAW_ENABLE_BROWSER_TOOL=0 bash /tmp/install_openclaw.sh
 ```
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 $env:OPENCLAW_ENABLE_BROWSER_TOOL = '0'
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
@@ -282,6 +291,7 @@ OPENCLAW_SKIP_UPSTREAM_CHECK=1 bash /tmp/install_openclaw.sh
 - `PowerShell` 版跳过基础上游连通性校验：
 
 ```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -SkipUpstreamCheck
