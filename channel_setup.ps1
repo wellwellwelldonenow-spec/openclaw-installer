@@ -1,6 +1,5 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('telegram', 'discord', 'slack', 'feishu', 'whatsapp', 'wechat', 'imessage')]
     [string]$Channel,
     [string]$ConfigPath,
     [string]$Token,
@@ -17,6 +16,19 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$script:InteractiveMenu = $false
+$script:Channel = $Channel
+$script:ConfigPath = $ConfigPath
+$script:Token = $Token
+$script:BotToken = $BotToken
+$script:AppToken = $AppToken
+$script:UserId = $UserId
+$script:ChannelId = $ChannelId
+$script:AppId = $AppId
+$script:AppSecret = $AppSecret
+$script:PluginId = $PluginId
+$script:NoRestart = [bool]$NoRestart
+$script:Test = [bool]$Test
 
 function Write-Info([string]$Message) {
     Write-Host "[INFO] $Message" -ForegroundColor Cyan
@@ -49,6 +61,103 @@ Options:
   -NoRestart           Skip gateway restart
   -Test                Run a basic credential test when supported
 '@ | Write-Host
+}
+
+function Get-ZhText {
+    param([Parameter(Mandatory = $true)][string]$Key)
+
+    switch ($Key) {
+        'menu_title' { return (-join ([char[]](0x6D88,0x606F,0x6E20,0x9053,0x4E00,0x952E,0x63A5,0x5165))) }
+        'menu_help' { return (-join ([char[]](0x67E5,0x770B,0x547D,0x4EE4,0x884C,0x5E2E,0x52A9))) }
+        'menu_exit' { return (-join ([char[]](0x9000,0x51FA))) }
+        'menu_prompt' { return (-join ([char[]](0x8BF7,0x9009,0x62E9,0x8981,0x63A5,0x5165,0x7684,0x6E20,0x9053))) }
+        'invalid_choice' { return (-join ([char[]](0x65E0,0x6548,0x9009,0x62E9,0xFF0C,0x8BF7,0x91CD,0x65B0,0x8F93,0x5165,0x3002))) }
+        'restart_prompt' { return (-join ([char[]](0x914D,0x7F6E,0x5B8C,0x6210,0x540E,0x662F,0x5426,0x81EA,0x52A8,0x91CD,0x542F,0x20,0x4F,0x70,0x65,0x6E,0x43,0x6C,0x61,0x77,0x20,0x7F51,0x5173,0xFF1F))) }
+        'test_prompt' { return (-join ([char[]](0x662F,0x5426,0x7ACB,0x5373,0x6267,0x884C,0x4E00,0x6B21,0x6E20,0x9053,0x8FDE,0x901A,0x6027,0x6D4B,0x8BD5,0xFF1F))) }
+        default { return $Key }
+    }
+}
+
+function Test-SupportedChannel {
+    param([string]$Name)
+
+    return $Name -in @('telegram', 'discord', 'slack', 'feishu', 'whatsapp', 'wechat', 'imessage')
+}
+
+function Test-InteractiveConsole {
+    try {
+        return -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected
+    }
+    catch {
+        return $true
+    }
+}
+
+function Read-YesNo {
+    param(
+        [string]$Prompt,
+        [bool]$Default = $true
+    )
+
+    $suffix = if ($Default) { '[Y/n]' } else { '[y/N]' }
+    $answer = Read-Host -Prompt "$Prompt $suffix"
+    if ([string]::IsNullOrWhiteSpace($answer)) {
+        return $Default
+    }
+
+    return $answer.Trim().ToLowerInvariant() -in @('y', 'yes', '1')
+}
+
+function Show-ChannelMenu {
+    while ($true) {
+        Write-Host ''
+        Write-Host ("OpenClaw " + (Get-ZhText 'menu_title')) -ForegroundColor Cyan
+        Write-Host '  1. Telegram'
+        Write-Host '  2. Discord'
+        Write-Host '  3. Slack'
+        Write-Host '  4. Feishu'
+        Write-Host '  5. WhatsApp'
+        Write-Host '  6. WeChat Plugin'
+        Write-Host '  7. iMessage'
+        Write-Host ("  h. " + (Get-ZhText 'menu_help'))
+        Write-Host ("  q. " + (Get-ZhText 'menu_exit'))
+
+        $choice = (Read-Host -Prompt (Get-ZhText 'menu_prompt')).Trim().ToLowerInvariant()
+        switch ($choice) {
+            '1' { $script:Channel = 'telegram'; break }
+            '2' { $script:Channel = 'discord'; break }
+            '3' { $script:Channel = 'slack'; break }
+            '4' { $script:Channel = 'feishu'; break }
+            '5' { $script:Channel = 'whatsapp'; break }
+            '6' { $script:Channel = 'wechat'; break }
+            '7' { $script:Channel = 'imessage'; break }
+            'h' { Show-Usage }
+            'q' { exit 0 }
+            default { Write-WarnMsg (Get-ZhText 'invalid_choice') }
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($script:Channel)) {
+            break
+        }
+    }
+
+    $script:InteractiveMenu = $true
+}
+
+function Configure-MenuOptions {
+    if (-not $script:InteractiveMenu) {
+        return
+    }
+
+    $script:NoRestart = -not (Read-YesNo -Prompt (Get-ZhText 'restart_prompt') -Default $true)
+
+    switch ($script:Channel) {
+        'telegram' { $script:Test = Read-YesNo -Prompt (Get-ZhText 'test_prompt') -Default $true }
+        'discord' { $script:Test = Read-YesNo -Prompt (Get-ZhText 'test_prompt') -Default $true }
+        'slack' { $script:Test = Read-YesNo -Prompt (Get-ZhText 'test_prompt') -Default $true }
+        'feishu' { $script:Test = Read-YesNo -Prompt (Get-ZhText 'test_prompt') -Default $true }
+        default { $script:Test = $false }
+    }
 }
 
 function Resolve-CliShim {
@@ -166,13 +275,80 @@ function Invoke-OpenClaw {
     return $result.Output
 }
 
+function Expand-ConfigPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $null
+    }
+
+    $expanded = $Path.Trim().Trim('"', "'")
+    if ([string]::IsNullOrWhiteSpace($expanded)) {
+        return $null
+    }
+
+    if ($expanded.StartsWith('~/') -or $expanded.StartsWith('~\')) {
+        return (Join-Path $HOME ($expanded.Substring(2) -replace '/', '\'))
+    }
+
+    if ($expanded.StartsWith('$HOME/')) {
+        return (Join-Path $HOME ($expanded.Substring(6) -replace '/', '\'))
+    }
+
+    if ($expanded.StartsWith('$HOME\')) {
+        return (Join-Path $HOME $expanded.Substring(6))
+    }
+
+    return $expanded
+}
+
+function Convert-OpenClawOutputToConfigPath {
+    param([string]$Output)
+
+    if ([string]::IsNullOrWhiteSpace($Output)) {
+        return $null
+    }
+
+    $lines = @(
+        $Output -split "\r?\n" |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+
+    [array]::Reverse($lines)
+    foreach ($line in $lines) {
+        $candidate = $line
+        if ($candidate -match '^(?i)config\s+file\s*:\s*(.+)$') {
+            $candidate = $matches[1].Trim()
+        }
+
+        $candidate = Expand-ConfigPath -Path $candidate
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        if ($candidate -notmatch '(?i)([\\/]|^[A-Z]:|^\\\\|(^|[\\/])openclaw\.json$)') {
+            continue
+        }
+
+        try {
+            [System.IO.Path]::GetFullPath($candidate) | Out-Null
+            return $candidate
+        }
+        catch {}
+    }
+
+    return $null
+}
+
 function Resolve-ConfigPath {
     if (-not [string]::IsNullOrWhiteSpace($script:ConfigPath)) {
+        $script:ConfigPath = Expand-ConfigPath -Path $script:ConfigPath
         return $script:ConfigPath
     }
 
     try {
-        $resolved = (Invoke-OpenClaw config file | Select-Object -Last 1).Trim()
+        $resolved = Convert-OpenClawOutputToConfigPath -Output (Invoke-OpenClaw config file)
         if (-not [string]::IsNullOrWhiteSpace($resolved)) {
             $script:ConfigPath = $resolved
             return $script:ConfigPath
@@ -321,7 +497,7 @@ fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 }
 
 function Restart-Gateway {
-    if ($NoRestart) {
+    if ($script:NoRestart) {
         Write-Info 'Gateway restart skipped'
         return
     }
@@ -341,39 +517,39 @@ function Restart-Gateway {
 }
 
 function Test-TelegramChannel {
-    if (-not $Test) { return }
-    if ([string]::IsNullOrWhiteSpace($UserId)) {
+    if (-not $script:Test) { return }
+    if ([string]::IsNullOrWhiteSpace($script:UserId)) {
         Write-WarnMsg 'Telegram test skipped because -UserId was not provided'
         return
     }
     Write-Info 'Sending Telegram test message'
-    $body = @{ chat_id = $UserId; text = 'OpenClaw Telegram channel setup completed.' } | ConvertTo-Json -Compress
-    Invoke-RestMethod -Method Post -Uri ("https://api.telegram.org/bot{0}/sendMessage" -f $Token) -ContentType 'application/json' -Body $body | Out-Null
+    $body = @{ chat_id = $script:UserId; text = 'OpenClaw Telegram channel setup completed.' } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Method Post -Uri ("https://api.telegram.org/bot{0}/sendMessage" -f $script:Token) -ContentType 'application/json' -Body $body | Out-Null
 }
 
 function Test-DiscordChannel {
-    if (-not $Test) { return }
-    if ([string]::IsNullOrWhiteSpace($ChannelId)) {
+    if (-not $script:Test) { return }
+    if ([string]::IsNullOrWhiteSpace($script:ChannelId)) {
         Write-WarnMsg 'Discord test skipped because -ChannelId was not provided'
         return
     }
     Write-Info 'Sending Discord test message'
-    $headers = @{ Authorization = "Bot $Token" }
+    $headers = @{ Authorization = "Bot $script:Token" }
     $body = @{ content = 'OpenClaw Discord channel setup completed.' } | ConvertTo-Json -Compress
-    Invoke-RestMethod -Method Post -Uri ("https://discord.com/api/v10/channels/{0}/messages" -f $ChannelId) -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
+    Invoke-RestMethod -Method Post -Uri ("https://discord.com/api/v10/channels/{0}/messages" -f $script:ChannelId) -Headers $headers -ContentType 'application/json' -Body $body | Out-Null
 }
 
 function Test-SlackChannel {
-    if (-not $Test) { return }
+    if (-not $script:Test) { return }
     Write-Info 'Checking Slack bot token'
-    $headers = @{ Authorization = "Bearer $BotToken" }
+    $headers = @{ Authorization = "Bearer $script:BotToken" }
     Invoke-RestMethod -Method Get -Uri 'https://slack.com/api/auth.test' -Headers $headers | Out-Null
 }
 
 function Test-FeishuChannel {
-    if (-not $Test) { return }
+    if (-not $script:Test) { return }
     Write-Info 'Checking Feishu app credentials'
-    $body = @{ app_id = $AppId; app_secret = $AppSecret } | ConvertTo-Json -Compress
+    $body = @{ app_id = $script:AppId; app_secret = $script:AppSecret } | ConvertTo-Json -Compress
     Invoke-RestMethod -Method Post -Uri 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal' -ContentType 'application/json' -Body $body | Out-Null
 }
 
@@ -508,14 +684,24 @@ function Setup-IMessage {
 }
 
 if (-not $PSBoundParameters.ContainsKey('Channel')) {
-    Show-Usage
-    exit 1
+    if (Test-InteractiveConsole) {
+        Show-ChannelMenu
+        Configure-MenuOptions
+    }
+    else {
+        Show-Usage
+        exit 1
+    }
+}
+
+if (-not [string]::IsNullOrWhiteSpace($script:Channel) -and -not (Test-SupportedChannel -Name $script:Channel)) {
+    Throw-Fail "Unsupported channel: $script:Channel"
 }
 
 Assert-OpenClawInstalled
 Ensure-ConfigFile
 
-switch ($Channel) {
+switch ($script:Channel) {
     'telegram' { Setup-Telegram }
     'discord' { Setup-Discord }
     'slack' { Setup-Slack }
@@ -523,7 +709,7 @@ switch ($Channel) {
     'whatsapp' { Setup-WhatsApp }
     'wechat' { Setup-WeChat }
     'imessage' { Setup-IMessage }
-    default { Throw-Fail "Unsupported channel: $Channel" }
+    default { Throw-Fail "Unsupported channel: $script:Channel" }
 }
 
 Write-Host ''

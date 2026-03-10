@@ -14,6 +14,7 @@ APP_SECRET=""
 PLUGIN_ID=""
 RESTART_GATEWAY=1
 RUN_TEST=0
+INTERACTIVE_MENU=0
 
 log_info() {
   printf '\033[1;34m[INFO]\033[0m %s\n' "$*"
@@ -71,17 +72,145 @@ Examples:
 EOF
 }
 
+is_interactive_terminal() {
+  [ -t 0 ] && [ -t 1 ]
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local default="${2:-y}"
+  local answer=""
+
+  if [ ! -t 0 ]; then
+    [ "$default" = "y" ]
+    return
+  fi
+
+  if [ "$default" = "y" ]; then
+    printf '%s [Y/n]: ' "$prompt" >&2
+  else
+    printf '%s [y/N]: ' "$prompt" >&2
+  fi
+
+  read -r answer || true
+  answer="${answer:-$default}"
+  case "$answer" in
+    y|Y|yes|YES|1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+show_channel_menu() {
+  local choice=""
+
+  while true; do
+    printf '\n'
+    printf '%s\n' $'OpenClaw \u6d88\u606f\u6e20\u9053\u4e00\u952e\u63a5\u5165'
+    printf '%s\n' '  1. Telegram'
+    printf '%s\n' '  2. Discord'
+    printf '%s\n' '  3. Slack'
+    printf '%s\n' '  4. Feishu'
+    printf '%s\n' '  5. WhatsApp'
+    printf '%s\n' '  6. WeChat Plugin'
+    printf '%s\n' '  7. iMessage'
+    printf '%s\n' $'  h. \u67e5\u770b\u547d\u4ee4\u884c\u5e2e\u52a9'
+    printf '%s\n' $'  q. \u9000\u51fa'
+    printf '%s' $'\u8bf7\u9009\u62e9\u8981\u63a5\u5165\u7684\u6e20\u9053: ' >&2
+    read -r choice || true
+
+    case "${choice:-}" in
+      1) CHANNEL="telegram"; break ;;
+      2) CHANNEL="discord"; break ;;
+      3) CHANNEL="slack"; break ;;
+      4) CHANNEL="feishu"; break ;;
+      5) CHANNEL="whatsapp"; break ;;
+      6) CHANNEL="wechat"; break ;;
+      7) CHANNEL="imessage"; break ;;
+      h|H)
+        show_usage
+        ;;
+      q|Q)
+        exit 0
+        ;;
+      *)
+        log_warn $'\u65e0\u6548\u9009\u62e9\uff0c\u8bf7\u91cd\u65b0\u8f93\u5165\u3002'
+        ;;
+    esac
+  done
+
+  INTERACTIVE_MENU=1
+}
+
+configure_menu_options() {
+  [ "$INTERACTIVE_MENU" -eq 1 ] || return 0
+
+  if prompt_yes_no $'\u914d\u7f6e\u5b8c\u6210\u540e\u662f\u5426\u81ea\u52a8\u91cd\u542f OpenClaw \u7f51\u5173\uff1f' "y"; then
+    RESTART_GATEWAY=1
+  else
+    RESTART_GATEWAY=0
+  fi
+
+  case "$CHANNEL" in
+    telegram|discord|slack|feishu)
+      if prompt_yes_no $'\u662f\u5426\u7acb\u5373\u6267\u884c\u4e00\u6b21\u6e20\u9053\u8fde\u901a\u6027\u6d4b\u8bd5\uff1f' "y"; then
+        RUN_TEST=1
+      else
+        RUN_TEST=0
+      fi
+      ;;
+    *)
+      RUN_TEST=0
+      ;;
+  esac
+}
+
 check_openclaw() {
   command -v openclaw >/dev/null 2>&1 || fail "openclaw not found. Run install_openclaw.sh first."
   command -v node >/dev/null 2>&1 || fail "node not found. OpenClaw channel setup needs Node.js."
 }
 
+normalize_config_path() {
+  local raw_output="${1:-}"
+  local candidate=""
+  local line=""
+
+  while IFS= read -r line; do
+    line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$line" ] || continue
+    candidate="$line"
+  done <<EOF
+$raw_output
+EOF
+
+  candidate="$(printf '%s' "$candidate" | sed -E 's/^[[:space:]]*[Cc]onfig[[:space:]]+file[[:space:]]*:[[:space:]]*//')"
+  candidate="${candidate%\"}"
+  candidate="${candidate#\"}"
+  candidate="${candidate%\'}"
+  candidate="${candidate#\'}"
+
+  case "$candidate" in
+    "~/"*) candidate="$HOME/${candidate#\~/}" ;;
+    "~\\"*) candidate="$HOME/${candidate#\~\\}"; candidate="${candidate//\\//}" ;;
+    '$HOME/'*) candidate="$HOME/${candidate#\$HOME/}" ;;
+    '$HOME\\'*) candidate="$HOME/${candidate#\$HOME\\}"; candidate="${candidate//\\//}" ;;
+  esac
+
+  case "$candidate" in
+    *[\\/]*|openclaw.json) printf '%s\n' "$candidate" ;;
+    *) return 1 ;;
+  esac
+}
+
 resolve_config_path() {
+  local raw_output=""
+
   if [ -n "$CONFIG_PATH" ]; then
+    CONFIG_PATH="$(normalize_config_path "$CONFIG_PATH" 2>/dev/null || printf '%s' "$CONFIG_PATH")"
     return 0
   fi
 
-  CONFIG_PATH="$(openclaw config file 2>/dev/null | awk 'NF { path=$0 } END { print path }')"
+  raw_output="$(openclaw config file 2>/dev/null || true)"
+  CONFIG_PATH="$(normalize_config_path "$raw_output" 2>/dev/null || true)"
   if [ -z "$CONFIG_PATH" ]; then
     CONFIG_PATH="$HOME/.openclaw/openclaw.json"
   fi
@@ -376,10 +505,16 @@ setup_imessage() {
 }
 
 parse_args() {
-  [ "$#" -gt 0 ] || {
+  if [ "$#" -eq 0 ]; then
+    if is_interactive_terminal; then
+      show_channel_menu
+      configure_menu_options
+      return 0
+    fi
+
     show_usage
     exit 1
-  }
+  fi
 
   while [ "$#" -gt 0 ]; do
     case "$1" in

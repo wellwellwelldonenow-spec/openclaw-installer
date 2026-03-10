@@ -125,6 +125,7 @@ The channel setup scripts try to:
 - repair `plugins.allow`, `plugins.entries`, and default channel policy in the config file
 - configure the channel with `openclaw` CLI
 - optionally restart the gateway and run a basic credential test
+- enter a Chinese interactive menu automatically when run without arguments
 
 Use `openclaw channels list` and `openclaw gateway status --deep` after setup to verify the result.
 
