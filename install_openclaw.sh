@@ -11,7 +11,9 @@ BASE_URL="https://newapi.megabyai.cc/v1"
 MODEL_ID_DEFAULT="gpt-5.3-codex"
 MODEL_ID="${OPENCLAW_MODEL_ID:-$MODEL_ID_DEFAULT}"
 MODEL_NAME="${MODEL_ID} (newapi)"
-ENABLE_BROWSER_TOOL="${OPENCLAW_ENABLE_BROWSER_TOOL:-0}"
+ENABLE_BROWSER_TOOL="${OPENCLAW_ENABLE_BROWSER_TOOL:-1}"
+REQUESTED_PROVIDER_API="${OPENCLAW_PROVIDER_API:-auto}"
+RESOLVED_PROVIDER_API="openai-completions"
 OS=""
 ARCH=""
 TEMP_SWAP_FILE="/var/tmp/openclaw-installer.swap"
@@ -1454,6 +1456,104 @@ verify_upstream_api() {
   fail 'API Key 无效、上游接口不可用，或本机网络/TLS 连接存在问题'
 }
 
+responses_status_supported() {
+  case "${1:-}" in
+    200|201|202|400|401|403|409|422|429|500)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+probe_responses_api_with_curl() {
+  local http_code response_output payload
+  response_output='/tmp/openclaw_responses_check.json'
+  payload="$(printf '{"model":"%s","input":"OpenClaw probe","max_output_tokens":1}' "$MODEL_ID")"
+
+  http_code="$(curl --http1.1 --tlsv1.2 --retry 1 --retry-delay 1 \
+    --connect-timeout 15 --max-time 30 \
+    -sS -o "$response_output" -w '%{http_code}' \
+    -X POST "$BASE_URL/responses" \
+    -H "Authorization: Bearer $NEWAPI_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d "$payload" 2>/dev/null || printf '000')"
+
+  responses_status_supported "$http_code"
+}
+
+probe_responses_api_with_node() {
+  local node_status node_output
+  node_output='/tmp/openclaw_responses_check.json'
+
+  if node_status="$(node - "$BASE_URL/responses" "$NEWAPI_API_KEY" "$MODEL_ID" "$node_output" <<'NODE'
+const fs = require('fs');
+
+const [url, apiKey, modelId, outputPath] = process.argv.slice(2);
+
+(async () => {
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: modelId,
+        input: 'OpenClaw probe',
+        max_output_tokens: 1,
+      }),
+    });
+    const text = await response.text();
+    fs.writeFileSync(outputPath, text);
+    process.stdout.write(String(response.status));
+  } catch (error) {
+    fs.writeFileSync(outputPath, String(error && error.stack ? error.stack : error));
+    process.stdout.write('000');
+    process.exit(1);
+  }
+})();
+NODE
+)"; then
+    responses_status_supported "$node_status"
+    return $?
+  fi
+
+  return 1
+}
+
+resolve_provider_api_mode() {
+  case "$REQUESTED_PROVIDER_API" in
+    openai-responses|responses)
+      RESOLVED_PROVIDER_API="openai-responses"
+      log "Using API adapter from OPENCLAW_PROVIDER_API: $RESOLVED_PROVIDER_API"
+      return 0
+      ;;
+    openai-completions|completions)
+      RESOLVED_PROVIDER_API="openai-completions"
+      log "Using API adapter from OPENCLAW_PROVIDER_API: $RESOLVED_PROVIDER_API"
+      return 0
+      ;;
+    auto|'')
+      ;;
+    *)
+      warn "Unknown OPENCLAW_PROVIDER_API=$REQUESTED_PROVIDER_API, falling back to auto detection"
+      ;;
+  esac
+
+  log "Probing upstream API mode"
+  if probe_responses_api_with_curl || probe_responses_api_with_node; then
+    RESOLVED_PROVIDER_API="openai-responses"
+    log "Detected /responses support; using $RESOLVED_PROVIDER_API"
+    return 0
+  fi
+
+  RESOLVED_PROVIDER_API="openai-completions"
+  warn "Responses API probe failed; falling back to $RESOLVED_PROVIDER_API"
+}
+
 bootstrap_openclaw() {
   local config_home
   config_home="${HOME}/.openclaw"
@@ -1492,11 +1592,11 @@ write_openclaw_config() {
   fi
 
   log "写入 OpenClaw 配置：$config_path"
-  node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" "$OPENCLAW_PORT" "$ENABLE_BROWSER_TOOL" <<'NODE'
+  node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" "$OPENCLAW_PORT" "$ENABLE_BROWSER_TOOL" "$RESOLVED_PROVIDER_API" <<'NODE'
 const fs = require('fs');
 const crypto = require('crypto');
 
-const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort, enableBrowserToolRaw] = process.argv.slice(2);
+const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort, enableBrowserToolRaw, providerApi] = process.argv.slice(2);
 const enableBrowserTool = enableBrowserToolRaw === '1';
 
 let config = {};
@@ -1517,7 +1617,7 @@ config.models.providers[providerId] = {
   ...existingProvider,
   baseUrl,
   apiKey,
-  api: 'openai-completions',
+  api: providerApi,
   models: [
     {
       id: modelId,
@@ -1798,6 +1898,7 @@ main() {
   config_path="$(resolve_config_path)"
   write_service_env "$config_path"
   verify_upstream_api
+  resolve_provider_api_mode
   write_openclaw_config
   validate_openclaw
   install_and_start_gateway
@@ -1816,7 +1917,7 @@ main() {
   if [ "$ENABLE_BROWSER_TOOL" = "1" ]; then
     printf '%s' 'enabled'
   else
-    printf '%s' 'disabled by default (set OPENCLAW_ENABLE_BROWSER_TOOL=1 to enable)'
+    printf '%s' 'disabled (set OPENCLAW_ENABLE_BROWSER_TOOL=1 to enable)'
   fi
 )
 - Dashboard：http://127.0.0.1:${OPENCLAW_PORT}/

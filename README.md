@@ -18,7 +18,8 @@
 - 自动写入 `https://newapi.megabyai.cc/v1` 的 OpenAI 兼容配置
 - 自动设置默认模型为 `megabyai/<你的模型ID>`
 - 自动写入 `OPENCLAW_GATEWAY_PORT`、`OPENCLAW_CONFIG_PATH`、`OPENCLAW_STATE_DIR` 到服务环境
-- 默认禁用 `browser` tool，避免部分 OpenAI-compatible 上游因函数 schema 校验导致 `HTTP 400`
+- 默认启用 `browser` tool，并自动探测上游是否支持 `openai-responses`
+- 如果上游支持 `/responses`，自动优先使用 `openai-responses` 以获得更好的工具兼容性
 - 上游接口自动校验，优先使用系统请求栈，失败时自动回退到 `Node.js` TLS 栈
 - 网关健康检查失败时自动执行 `openclaw doctor --fix` 并重装服务后重试
 - 失败时自动输出 `gateway status --deep`、`status --all`、日志和一次前台启动诊断
@@ -167,7 +168,7 @@ Remove-Item -Recurse -Force "$HOME\.openclaw"
 - 自动写入 `~/.openclaw/.env`，把 `PATH`、`OPENCLAW_PORT`、`OPENCLAW_CONFIG_PATH` 固定给后台服务
 - 避免 `launchd` 因 `nvm`/shell PATH 导致网关无法拉起
 - 默认在未配置 embedding provider 时关闭 `memorySearch`，避免无意义告警
-- 默认关闭 `browser` tool；如你的上游明确兼容，可手动设置 `OPENCLAW_ENABLE_BROWSER_TOOL=1`
+- 默认启用 `browser` tool；安装脚本会自动探测并优先使用 `openai-responses`
 
 ## Windows / WSL2 说明
 
@@ -242,14 +243,28 @@ Get-NetTCPConnection -LocalPort 18789 -State Listen
 
 ## 可选开关
 
-- 启用 `browser` tool（仅在你的 OpenAI-compatible 上游确认兼容时再开）：
+- 强制指定 provider API adapter：
 
 ```bash
-OPENCLAW_ENABLE_BROWSER_TOOL=1 bash /tmp/install_openclaw.sh
+OPENCLAW_PROVIDER_API=openai-responses bash /tmp/install_openclaw.sh
+OPENCLAW_PROVIDER_API=openai-completions bash /tmp/install_openclaw.sh
 ```
 
 ```powershell
-$env:OPENCLAW_ENABLE_BROWSER_TOOL = '1'
+$env:OPENCLAW_PROVIDER_API = 'openai-responses'
+$script = Join-Path $env:TEMP 'install_openclaw.ps1'
+iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
+& $script
+```
+
+- 禁用 `browser` tool：
+
+```bash
+OPENCLAW_ENABLE_BROWSER_TOOL=0 bash /tmp/install_openclaw.sh
+```
+
+```powershell
+$env:OPENCLAW_ENABLE_BROWSER_TOOL = '0'
 $script = Join-Path $env:TEMP 'install_openclaw.ps1'
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script
 & $script

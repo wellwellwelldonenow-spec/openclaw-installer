@@ -13,7 +13,9 @@ $ProviderId = 'megabyai'
 $BaseUrl = 'https://newapi.megabyai.cc/v1'
 $DefaultModelId = 'gpt-5.3-codex'
 $OfficialWindowsInstallUrl = 'https://openclaw.ai/install.ps1'
-$EnableBrowserTool = $env:OPENCLAW_ENABLE_BROWSER_TOOL -eq '1'
+$EnableBrowserTool = $env:OPENCLAW_ENABLE_BROWSER_TOOL -ne '0'
+$RequestedProviderApi = if ([string]::IsNullOrWhiteSpace($env:OPENCLAW_PROVIDER_API)) { 'auto' } else { $env:OPENCLAW_PROVIDER_API.Trim() }
+$ResolvedProviderApi = 'openai-completions'
 $SkipServiceInstall = $false
 
 function Initialize-ConsoleEncoding {
@@ -1570,6 +1572,108 @@ function Verify-UpstreamApi {
     Throw-Fail 'API key invalid, upstream unavailable, or local network/TLS connectivity is broken'
 }
 
+function Test-ResponsesStatusSupported([int]$StatusCode) {
+    return $StatusCode -in @(200, 201, 202, 400, 401, 403, 409, 422, 429, 500)
+}
+
+function Test-ResponsesWithPowerShell {
+    try {
+        $body = @{
+            model = $ModelId
+            input = 'OpenClaw probe'
+            max_output_tokens = 1
+        } | ConvertTo-Json -Compress
+        $params = @{
+            Uri = "$BaseUrl/responses"
+            Method = 'Post'
+            Headers = @{ Authorization = "Bearer $ApiKey" }
+            ContentType = 'application/json'
+            Body = $body
+            TimeoutSec = 30
+        }
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            $params.UseBasicParsing = $true
+        }
+        $response = Invoke-WebRequest @params
+        return (Test-ResponsesStatusSupported $response.StatusCode)
+    } catch {
+        $response = $_.Exception.Response
+        if ($null -ne $response -and $response.StatusCode) {
+            return (Test-ResponsesStatusSupported ([int]$response.StatusCode))
+        }
+        return $false
+    }
+}
+
+function Test-ResponsesWithNode {
+    $script = @'
+const url = process.argv[1];
+const apiKey = process.argv[2];
+const modelId = process.argv[3];
+(async () => {
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: modelId,
+        input: 'OpenClaw probe',
+        max_output_tokens: 1,
+      }),
+    });
+    process.exit([200, 201, 202, 400, 401, 403, 409, 422, 429, 500].includes(response.status) ? 0 : 1);
+  } catch (error) {
+    console.error(String(error && error.stack ? error.stack : error));
+    process.exit(1);
+  }
+})();
+'@
+    & node -e $script "$BaseUrl/responses" "$ApiKey" "$ModelId"
+    return $LASTEXITCODE -eq 0
+}
+
+function Resolve-UpstreamProviderApi {
+    switch ($RequestedProviderApi) {
+        'openai-responses' {
+            $script:ResolvedProviderApi = 'openai-responses'
+            Write-Info "Using API adapter from OPENCLAW_PROVIDER_API: $ResolvedProviderApi"
+            return
+        }
+        'responses' {
+            $script:ResolvedProviderApi = 'openai-responses'
+            Write-Info "Using API adapter from OPENCLAW_PROVIDER_API: $ResolvedProviderApi"
+            return
+        }
+        'openai-completions' {
+            $script:ResolvedProviderApi = 'openai-completions'
+            Write-Info "Using API adapter from OPENCLAW_PROVIDER_API: $ResolvedProviderApi"
+            return
+        }
+        'completions' {
+            $script:ResolvedProviderApi = 'openai-completions'
+            Write-Info "Using API adapter from OPENCLAW_PROVIDER_API: $ResolvedProviderApi"
+            return
+        }
+        'auto' { }
+        default {
+            Write-WarnMsg "Unknown OPENCLAW_PROVIDER_API=$RequestedProviderApi, falling back to auto detection"
+        }
+    }
+
+    Write-Info 'Probing upstream API mode'
+    if ((Test-ResponsesWithPowerShell) -or (Test-ResponsesWithNode)) {
+        $script:ResolvedProviderApi = 'openai-responses'
+        Write-Info "Detected /responses support; using $ResolvedProviderApi"
+        return
+    }
+
+    $script:ResolvedProviderApi = 'openai-completions'
+    Write-WarnMsg "Responses API probe failed; falling back to $ResolvedProviderApi"
+}
+
 function Test-GatewayHealth {
     try {
         Invoke-OpenClaw gateway health *> $null
@@ -1813,7 +1917,7 @@ function Write-OpenClawConfig {
     $nodeScript = @'
 const fs = require('fs');
 const crypto = require('crypto');
-const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort, enableBrowserToolRaw] = process.argv.slice(1);
+const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort, enableBrowserToolRaw, providerApi] = process.argv.slice(1);
 const enableBrowserTool = enableBrowserToolRaw === '1';
 let config = {};
 if (fs.existsSync(configPath)) {
@@ -1828,7 +1932,7 @@ config.models.providers[providerId] = {
   ...existingProvider,
   baseUrl,
   apiKey,
-  api: 'openai-completions',
+  api: providerApi,
   models: [{ id: modelId, name: modelName, input: ['text'], contextWindow: 64000, maxTokens: 4096 }],
 };
 config.gateway = config.gateway || {};
@@ -1869,7 +1973,7 @@ if (typeof config.agents.defaults.memorySearch.provider === 'undefined' && typeo
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 '@
 
-    & node -e $nodeScript $configPath $ApiKey $BaseUrl $ProviderId $ModelId "$ModelId (newapi)" $GatewayPort $(if ($EnableBrowserTool) { '1' } else { '0' })
+    & node -e $nodeScript $configPath $ApiKey $BaseUrl $ProviderId $ModelId "$ModelId (newapi)" $GatewayPort $(if ($EnableBrowserTool) { '1' } else { '0' }) $ResolvedProviderApi
 }
 
 function Get-GatewayToken([string]$ConfigPath) {
@@ -2092,6 +2196,7 @@ Ensure-OpenClawBootstrap
 $configPath = Get-ConfigPath
 Write-ServiceEnv -ConfigPath $configPath
 Verify-UpstreamApi
+Resolve-UpstreamProviderApi
 Write-OpenClawConfig
 Validate-OpenClaw
 Install-AndStartGateway
@@ -2104,7 +2209,8 @@ Write-Host '- OpenClaw installed and initialized'
 Write-Host "- Gateway port: $GatewayPort"
 Write-Host "- Provider: $ProviderId"
 Write-Host "- Model: $ModelId"
-Write-Host "- Browser tool: $(if ($EnableBrowserTool) { 'enabled' } else { 'disabled by default (set OPENCLAW_ENABLE_BROWSER_TOOL=1 to enable)' })"
+Write-Host "- API adapter: $ResolvedProviderApi"
+Write-Host "- Browser tool: $(if ($EnableBrowserTool) { 'enabled' } else { 'disabled (set OPENCLAW_ENABLE_BROWSER_TOOL=1 to enable)' })"
 Write-Host "- Dashboard: http://127.0.0.1:$GatewayPort/"
 Write-Host "- Gateway token: $(if ($token = Get-GatewayToken $configPath) { $token } else { 'not read; run openclaw config get gateway.auth.token' })"
 Write-Host ''
