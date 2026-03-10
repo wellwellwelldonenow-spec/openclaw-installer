@@ -13,7 +13,7 @@ $ProviderId = 'megabyai'
 $BaseUrl = 'https://newapi.megabyai.cc/v1'
 $DefaultModelId = 'gpt-5.3-codex'
 $OfficialWindowsInstallUrl = 'https://openclaw.ai/install.ps1'
-$EnableBrowserTool = $env:OPENCLAW_ENABLE_BROWSER_TOOL -ne '0'
+$EnableBrowserTool = $env:OPENCLAW_ENABLE_BROWSER_TOOL -eq '1'
 $SkipServiceInstall = $false
 
 function Initialize-ConsoleEncoding {
@@ -2104,7 +2104,7 @@ Write-Host '- OpenClaw installed and initialized'
 Write-Host "- Gateway port: $GatewayPort"
 Write-Host "- Provider: $ProviderId"
 Write-Host "- Model: $ModelId"
-Write-Host "- Browser tool: $(if ($EnableBrowserTool) { 'enabled' } else { 'disabled (set OPENCLAW_ENABLE_BROWSER_TOOL=0 to keep it off)' })"
+Write-Host "- Browser tool: $(if ($EnableBrowserTool) { 'enabled' } else { 'disabled by default (set OPENCLAW_ENABLE_BROWSER_TOOL=1 to enable)' })"
 Write-Host "- Dashboard: http://127.0.0.1:$GatewayPort/"
 Write-Host "- Gateway token: $(if ($token = Get-GatewayToken $configPath) { $token } else { 'not read; run openclaw config get gateway.auth.token' })"
 Write-Host ''

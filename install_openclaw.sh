@@ -11,7 +11,7 @@ BASE_URL="https://newapi.megabyai.cc/v1"
 MODEL_ID_DEFAULT="gpt-5.3-codex"
 MODEL_ID="${OPENCLAW_MODEL_ID:-$MODEL_ID_DEFAULT}"
 MODEL_NAME="${MODEL_ID} (newapi)"
-ENABLE_BROWSER_TOOL="${OPENCLAW_ENABLE_BROWSER_TOOL:-1}"
+ENABLE_BROWSER_TOOL="${OPENCLAW_ENABLE_BROWSER_TOOL:-0}"
 OS=""
 ARCH=""
 TEMP_SWAP_FILE="/var/tmp/openclaw-installer.swap"
@@ -1816,7 +1816,7 @@ main() {
   if [ "$ENABLE_BROWSER_TOOL" = "1" ]; then
     printf '%s' 'enabled'
   else
-    printf '%s' 'disabled (OPENCLAW_ENABLE_BROWSER_TOOL=0 可关闭默认启用)'
+    printf '%s' 'disabled by default (set OPENCLAW_ENABLE_BROWSER_TOOL=1 to enable)'
   fi
 )
 - Dashboard：http://127.0.0.1:${OPENCLAW_PORT}/
