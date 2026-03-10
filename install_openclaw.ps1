@@ -1297,9 +1297,51 @@ function Probe-Provider {
 
 function Remove-PathSafe([string]$PathValue) {
     if ([string]::IsNullOrWhiteSpace($PathValue)) { return }
-    if (Test-Path $PathValue) {
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        if (-not (Test-Path $PathValue)) {
+            return
+        }
+
         Remove-Item -Path $PathValue -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path $PathValue)) {
+            return
+        }
+
+        if (Test-Path -Path $PathValue -PathType Container) {
+            & cmd.exe /d /c "rd /s /q `"$PathValue`"" *> $null
+        } else {
+            & cmd.exe /d /c "del /f /q `"$PathValue`"" *> $null
+        }
+
+        if (-not (Test-Path $PathValue)) {
+            return
+        }
+
+        Start-Sleep -Seconds 2
     }
+}
+
+function Stop-OpenClawProcesses {
+    $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $commandLine = $_.CommandLine
+        $executablePath = $_.ExecutablePath
+
+        ($commandLine -and (
+            $commandLine -match '(^|[^a-z])openclaw([^a-z]|$)' -or
+            $commandLine -match '\\node_modules\\openclaw\\' -or
+            $commandLine -match '\\\.openclaw\\'
+        )) -or
+        ($executablePath -and $executablePath -match 'openclaw(\.cmd)?$')
+    }
+
+    foreach ($process in $processes) {
+        if ($process.ProcessId -eq $PID) { continue }
+        try {
+            Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+        } catch {}
+    }
+
+    Start-Sleep -Seconds 2
 }
 
 function Remove-OpenClawPackage {
@@ -1326,8 +1368,14 @@ function Remove-OpenClawPackage {
     foreach ($pathValue in @(
         'C:\Program Files\nodejs\openclaw.cmd',
         'C:\Program Files\nodejs\openclaw',
+        'C:\Program Files (x86)\nodejs\openclaw.cmd',
+        'C:\Program Files (x86)\nodejs\openclaw',
+        (Join-Path $env:APPDATA 'npm\openclaw.cmd'),
+        (Join-Path $env:APPDATA 'npm\openclaw'),
+        (Join-Path $env:APPDATA 'npm\node_modules\openclaw'),
         (Join-Path $HOME '.npm-global\openclaw.cmd'),
-        (Join-Path $HOME '.npm-global\openclaw')
+        (Join-Path $HOME '.npm-global\openclaw'),
+        (Join-Path $HOME '.npm-global\node_modules\openclaw')
     )) {
         Remove-PathSafe $pathValue
     }
@@ -1336,6 +1384,7 @@ function Remove-OpenClawPackage {
 function Remove-GatewayTask {
     foreach ($taskName in @('OpenClaw Gateway')) {
         if (Test-Command 'schtasks') {
+            schtasks /End /TN $taskName *> $null
             schtasks /Delete /TN $taskName /F *> $null
         }
     }
@@ -1370,7 +1419,9 @@ function Remove-ScriptInstalledNode {
 
 function Invoke-Uninstall {
     Write-Info 'Removing OpenClaw and script-created environment'
+    Stop-OpenClawProcesses
     Remove-GatewayTask
+    Stop-OpenClawProcesses
     Remove-OpenClawPackage
     Remove-OpenClawState
     Remove-ScriptInstalledNode
