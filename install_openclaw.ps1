@@ -305,6 +305,59 @@ function Get-OpenClawCommand {
     )
 }
 
+function Get-NativeCrashHint {
+    param(
+        [string]$CommandName,
+        [int]$ExitCode
+    )
+
+    if ($ExitCode -eq 3221225477) {
+        return "$CommandName exited with 3221225477 (0xC0000005). This usually means node.exe crashed due to antivirus/security software interference, a broken Node.js install, mixed 32/64-bit binaries, or a damaged npm cache. Reinstall Node.js 22 x64, check where.exe node/npm, clear npm cache, and temporarily disable antivirus/Defender to retry."
+    }
+
+    return $null
+}
+
+function Get-CommandCandidates {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $results = New-Object 'System.Collections.Generic.List[string]'
+
+    try {
+        foreach ($line in (& where.exe $Name 2>$null)) {
+            $candidate = ([string]$line).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and -not $results.Contains($candidate)) {
+                $results.Add($candidate)
+            }
+        }
+    } catch {}
+
+    return $results
+}
+
+function Get-AntivirusProducts {
+    $products = New-Object 'System.Collections.Generic.List[string]'
+
+    foreach ($namespace in @('root\SecurityCenter2', 'root\SecurityCenter')) {
+        try {
+            foreach ($item in (Get-CimInstance -Namespace $namespace -ClassName AntiVirusProduct -ErrorAction Stop)) {
+                $name = ([string]$item.displayName).Trim()
+                if (-not [string]::IsNullOrWhiteSpace($name) -and -not $products.Contains($name)) {
+                    $products.Add($name)
+                }
+            }
+        } catch {}
+        if ($products.Count -gt 0) {
+            break
+        }
+    }
+
+    return $products
+}
+
 function Invoke-NativeCommandSafe {
     param(
         [Parameter(Mandatory = $true)]
@@ -370,6 +423,10 @@ function Invoke-Npm {
         $message = ($output | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($message)) {
             $message = "npm failed with exit code $exitCode"
+        }
+        $crashHint = Get-NativeCrashHint -CommandName 'npm/node.exe' -ExitCode $exitCode
+        if (-not [string]::IsNullOrWhiteSpace($crashHint)) {
+            $message = "$message`n$crashHint"
         }
         throw $message
     }
@@ -487,6 +544,105 @@ function Prefer-SystemNodePath {
     }
 
     return $false
+}
+
+function Test-NodeRuntimeHealthy {
+    $nodeCommand = Resolve-CliShim -BaseName 'node' -PreferredPaths @(
+        'C:\Program Files\nodejs\node.exe',
+        'C:\Program Files (x86)\nodejs\node.exe'
+    )
+    if ([string]::IsNullOrWhiteSpace($nodeCommand)) {
+        return $false
+    }
+
+    $result = Invoke-NativeCommandSafe $nodeCommand '-v'
+    return $result.ExitCode -eq 0
+}
+
+function Assert-NodeAndNpmHealthy {
+    $nodeCommand = Resolve-CliShim -BaseName 'node' -PreferredPaths @(
+        'C:\Program Files\nodejs\node.exe',
+        'C:\Program Files (x86)\nodejs\node.exe'
+    )
+    if ([string]::IsNullOrWhiteSpace($nodeCommand)) {
+        Throw-Fail 'node.exe not found after installation'
+    }
+
+    $nodeResult = Invoke-NativeCommandSafe $nodeCommand '-v'
+    if ($nodeResult.ExitCode -ne 0) {
+        $nodeMessage = (($nodeResult.Output | Out-String).Trim())
+        if ([string]::IsNullOrWhiteSpace($nodeMessage)) {
+            $nodeMessage = "node.exe failed with exit code $($nodeResult.ExitCode)"
+        }
+        $nodeHint = Get-NativeCrashHint -CommandName 'node.exe' -ExitCode $nodeResult.ExitCode
+        if (-not [string]::IsNullOrWhiteSpace($nodeHint)) {
+            $nodeMessage = "$nodeMessage`n$nodeHint"
+        }
+        Throw-Fail $nodeMessage
+    }
+
+    $npmCommand = Get-NpmCommand
+    if ([string]::IsNullOrWhiteSpace($npmCommand)) {
+        Throw-Fail 'npm.cmd not found after installation'
+    }
+
+    $npmResult = Invoke-NativeCommandSafe $npmCommand '-v'
+    if ($npmResult.ExitCode -ne 0) {
+        $npmMessage = (($npmResult.Output | Out-String).Trim())
+        if ([string]::IsNullOrWhiteSpace($npmMessage)) {
+            $npmMessage = "npm failed with exit code $($npmResult.ExitCode)"
+        }
+        $npmHint = Get-NativeCrashHint -CommandName 'npm/node.exe' -ExitCode $npmResult.ExitCode
+        if (-not [string]::IsNullOrWhiteSpace($npmHint)) {
+            $npmMessage = "$npmMessage`n$npmHint"
+        }
+        Throw-Fail $npmMessage
+    }
+
+    Write-Info "Node.js runtime check passed: $(($nodeResult.Output | Select-Object -Last 1).Trim())"
+    Write-Info "npm runtime check passed: $(($npmResult.Output | Select-Object -Last 1).Trim())"
+}
+
+function Invoke-WindowsEnvironmentSelfCheck {
+    Write-Info 'Running Windows environment self-check'
+    Write-Info "OS architecture: $env:PROCESSOR_ARCHITECTURE"
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        Write-Info "WoW64 host architecture: $env:PROCESSOR_ARCHITEW6432"
+    }
+
+    $antivirusProducts = Get-AntivirusProducts
+    if ($antivirusProducts.Count -gt 0) {
+        Write-Info "Detected antivirus: $($antivirusProducts -join ', ')"
+        foreach ($name in $antivirusProducts) {
+            if ($name -notmatch 'Defender|Microsoft') {
+                Write-WarnMsg "Third-party antivirus detected: $name. If node.exe crashes with 3221225477, temporarily disable it or add Node.js/npm exclusions"
+            }
+        }
+    } else {
+        Write-WarnMsg 'Antivirus product list could not be read from Security Center'
+    }
+
+    foreach ($toolName in @('node', 'npm')) {
+        $candidates = Get-CommandCandidates $toolName
+        if ($candidates.Count -gt 1) {
+            Write-WarnMsg "Multiple $toolName executables found: $($candidates -join ', ')"
+        } elseif ($candidates.Count -eq 1) {
+            Write-Info "$toolName path: $($candidates[0])"
+        } else {
+            Write-WarnMsg "$toolName was not found in PATH"
+        }
+    }
+
+    if (Test-Command 'node') {
+        $nodePath = (Get-Command node).Source
+        if (Test-VersionManagerPath $nodePath) {
+            Write-WarnMsg "Node.js is currently resolved from a version-manager path: $nodePath"
+        }
+
+        if (-not (Test-NodeRuntimeHealthy)) {
+            Write-WarnMsg 'node.exe exists but did not complete a basic runtime check. Installation may still succeed after reinstalling Node.js 22 x64'
+        }
+    }
 }
 
 function Ensure-Git {
@@ -608,6 +764,7 @@ function Invoke-OfficialWindowsInstaller {
 
 function Ensure-NodeForOpenClaw {
     Prefer-SystemNodePath | Out-Null
+    Assert-NodeAndNpmHealthy
 
     $major = Get-NodeMajorVersion
     if ($major -ge 22) {
@@ -1473,6 +1630,7 @@ if (-not ($PSVersionTable -and ($env:OS -eq 'Windows_NT'))) {
 Initialize-ConsoleEncoding
 Initialize-WindowsInstallMode
 Initialize-Proxy
+Invoke-WindowsEnvironmentSelfCheck
 
 if ($Uninstall) {
     Invoke-Uninstall

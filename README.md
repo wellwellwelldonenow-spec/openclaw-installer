@@ -12,6 +12,7 @@
 - 自动检测 `openclaw` 是否已是 npm 最新版，是则跳过重装
 - 自动安装或升级 `openclaw`
 - 不运行 `OpenClaw onboard`，直接写入配置并启动 Gateway
+- Windows 安装前自动自检 `node/npm` 路径、系统架构和杀毒软件环境
 - 自动写入 `gateway.mode=local`、`gateway.bind=loopback`、`gateway.port`
 - 运行时可输入自定义模型 ID，不输入则默认 `gpt-5.3-codex`
 - 自动写入 `https://newapi.megabyai.cc/v1` 的 OpenAI 兼容配置
@@ -50,6 +51,7 @@ iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-in
 - 不进入新手引导，直接写入第三方 API 和 Gateway 配置
 - 写入 `%USERPROFILE%\.openclaw\.env`
 - 安装/升级 `openclaw`
+- 自动检查 `node/npm` 环境，遇到 `3221225477` 时提示排查杀毒软件和 Node 损坏
 - 初始化并修复 Gateway
 
 ### 方法一：使用官方安装脚本（推荐）
