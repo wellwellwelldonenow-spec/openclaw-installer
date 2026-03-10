@@ -75,6 +75,57 @@ npm install -g openclaw@latest
 curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh
 ```
 
+## One-Click Channel Setup
+
+- macOS / Linux / WSL2:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.sh -o /tmp/channel_setup.sh && bash /tmp/channel_setup.sh telegram --token <bot-token> --user-id <chat-id> --test
+```
+
+- Windows PowerShell:
+
+```powershell
+$script = Join-Path $env:TEMP 'channel_setup.ps1'
+iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.ps1 -OutFile $script
+& $script -Channel telegram -Token <bot-token> -UserId <chat-id> -Test
+```
+
+Supported channels:
+
+- `telegram`
+- `discord`
+- `slack`
+- `feishu`
+- `whatsapp`
+- `wechat`
+- `imessage` (macOS only)
+
+Examples:
+
+```bash
+bash /tmp/channel_setup.sh discord --token <bot-token> --channel-id <channel-id> --test
+bash /tmp/channel_setup.sh slack --bot-token <xoxb-token> --app-token <xapp-token> --test
+bash /tmp/channel_setup.sh feishu --app-id <app-id> --app-secret <app-secret> --test
+bash /tmp/channel_setup.sh whatsapp
+```
+
+```powershell
+& $script -Channel discord -Token <bot-token> -ChannelId <channel-id> -Test
+& $script -Channel slack -BotToken <xoxb-token> -AppToken <xapp-token> -Test
+& $script -Channel feishu -AppId <app-id> -AppSecret <app-secret> -Test
+& $script -Channel whatsapp
+```
+
+The channel setup scripts try to:
+
+- enable the required plugin
+- repair `plugins.allow`, `plugins.entries`, and default channel policy in the config file
+- configure the channel with `openclaw` CLI
+- optionally restart the gateway and run a basic credential test
+
+Use `openclaw channels list` and `openclaw gateway status --deep` after setup to verify the result.
+
 ## 卸载
 
 - macOS / Linux / WSL2：

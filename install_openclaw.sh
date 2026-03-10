@@ -1826,6 +1826,7 @@ main() {
   openclaw gateway status --deep
   openclaw logs --follow
   openclaw agent --local --message "测试：请回复OK"
+  curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.sh -o /tmp/channel_setup.sh && bash /tmp/channel_setup.sh telegram --token <bot-token> --user-id <chat-id> --test
 MSG
 }
 

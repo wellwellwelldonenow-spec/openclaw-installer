@@ -2111,3 +2111,4 @@ Write-Host ''
 Write-Host 'Manual tests:'
 Write-Host '  openclaw gateway status --deep'
 Write-Host '  openclaw logs --follow'
+Write-Host "  `$script = Join-Path `$env:TEMP 'channel_setup.ps1'; iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/channel_setup.ps1 -OutFile `$script; & `$script -Channel telegram -Token <bot-token> -UserId <chat-id> -Test"
