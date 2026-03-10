@@ -541,6 +541,14 @@ function Clear-NpmCacheDirectories {
 
 function Remove-StaleOpenClawShims {
     foreach ($pathValue in @(
+        'C:\Program Files\nodejs\openclaw.cmd',
+        'C:\Program Files\nodejs\openclaw',
+        'C:\Program Files\nodejs\openclaw.ps1',
+        'C:\Program Files\nodejs\node_modules\openclaw',
+        'C:\Program Files (x86)\nodejs\openclaw.cmd',
+        'C:\Program Files (x86)\nodejs\openclaw',
+        'C:\Program Files (x86)\nodejs\openclaw.ps1',
+        'C:\Program Files (x86)\nodejs\node_modules\openclaw',
         (Join-Path $env:APPDATA 'npm\openclaw.cmd'),
         (Join-Path $env:APPDATA 'npm\openclaw'),
         (Join-Path $env:APPDATA 'npm\openclaw.ps1'),
@@ -552,6 +560,67 @@ function Remove-StaleOpenClawShims {
     )) {
         Remove-PathIfExists $pathValue
     }
+}
+
+function Test-NodeLlamaCppPeerInstallCrash {
+    param(
+        [string]$Message
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    return $Message -match 'node-llama-cpp' -and
+        $Message -match 'postinstall|command failed' -and
+        ($Message -match 'falling back to using no GPU' -or (Test-NodeCrashMessage $Message))
+}
+
+function Test-OpenClawBrokenInstallMessage {
+    param(
+        [string]$Message
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    return ($Message -match 'Cannot find module' -and $Message -match 'openclaw\\openclaw\.mjs') -or
+        ($Message -match 'openclaw\.cmd' -and $Message -match 'openclaw\.mjs')
+}
+
+function Get-OpenClawRuntimeError {
+    $openclawCommand = Get-OpenClawCommand
+    if ([string]::IsNullOrWhiteSpace($openclawCommand)) {
+        return 'openclaw.cmd not found'
+    }
+
+    $result = Invoke-NativeCommandSafe $openclawCommand '--version'
+    if ($result.ExitCode -eq 0) {
+        return ''
+    }
+
+    $message = ($result.Output | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($message)) {
+        $message = "openclaw failed with exit code $($result.ExitCode)"
+    }
+
+    return $message
+}
+
+function Repair-BrokenOpenClawWindowsInstall {
+    param(
+        [string]$Reason = ''
+    )
+
+    Write-WarnMsg 'Removing broken OpenClaw installation remnants'
+    if (-not [string]::IsNullOrWhiteSpace($Reason)) {
+        Write-WarnMsg "OpenClaw repair trigger: $Reason"
+    }
+
+    Stop-OpenClawProcesses
+    Remove-StaleOpenClawShims
+    Clear-NpmCacheDirectories
 }
 
 function Repair-WindowsNodeEnvironment {
@@ -593,14 +662,15 @@ function Reinstall-WindowsNodeEnvironment {
     Repair-WindowsNodeEnvironment -Reason $Reason
 
     if (Test-Command 'winget') {
-        Write-Info 'Reinstalling Node.js with winget'
+        Write-Info 'Reinstalling Node.js 22 LTS with winget'
         try { winget uninstall --exact --id OpenJS.NodeJS --accept-source-agreements | Out-Null } catch {}
         try { winget uninstall --exact --id OpenJS.NodeJS.LTS --accept-source-agreements | Out-Null } catch {}
-        winget install --exact --id OpenJS.NodeJS --accept-source-agreements --accept-package-agreements --force | Out-Null
+        winget install --exact --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --force | Out-Null
     } elseif (Test-Command 'choco') {
-        Write-Info 'Reinstalling Node.js with Chocolatey'
+        Write-Info 'Reinstalling Node.js 22 LTS with Chocolatey'
         try { choco uninstall nodejs -y | Out-Null } catch {}
-        choco install nodejs -y --force | Out-Null
+        try { choco uninstall nodejs-lts -y | Out-Null } catch {}
+        choco install nodejs-lts -y --force | Out-Null
     } else {
         Throw-Fail 'Automatic Node.js reinstall requires winget or Chocolatey. Install Node.js 22 x64 manually first.'
     }
@@ -897,6 +967,11 @@ function Invoke-WindowsEnvironmentSelfCheck {
             Write-WarnMsg "Node.js is currently resolved from a version-manager path: $nodePath"
         }
 
+        $nodeMajor = Get-NodeMajorVersion
+        if ($nodeMajor -gt 24) {
+            Write-WarnMsg "Detected Node.js $(node -v). OpenClaw requires 22+, but native Windows installs are usually more stable on Node.js 22 LTS if npm postinstall crashes occur"
+        }
+
         if (-not (Test-NodeRuntimeHealthy)) {
             Write-WarnMsg 'node.exe exists but did not complete a basic runtime check. Installation may still succeed after reinstalling Node.js 22 x64'
         }
@@ -1052,19 +1127,33 @@ function Install-OpenClawWithNpm {
         Throw-Fail 'npm.cmd not found; skip npm fallback'
     }
 
-    Write-Info 'Falling back to npm install -g openclaw@latest'
+    Write-Info 'Falling back to npm install -g openclaw@latest --legacy-peer-deps'
     try {
-        Invoke-Npm install -g openclaw@latest
+        Invoke-Npm install -g openclaw@latest --legacy-peer-deps
     } catch {
         $installMessage = $_.Exception.Message
+        if (Test-NodeLlamaCppPeerInstallCrash $installMessage) {
+            Write-WarnMsg 'OpenClaw peer dependency node-llama-cpp crashed on native Windows; retrying after clearing broken install remnants'
+            Repair-BrokenOpenClawWindowsInstall -Reason $installMessage
+            Invoke-Npm install -g openclaw@latest --legacy-peer-deps
+            return
+        }
+
         if (Test-NodeCrashMessage $installMessage) {
             Repair-WindowsNodeEnvironment -Reason $installMessage
             try {
-                Invoke-Npm install -g openclaw@latest
+                Repair-BrokenOpenClawWindowsInstall -Reason $installMessage
+                Invoke-Npm install -g openclaw@latest --legacy-peer-deps
             } catch {
                 $repairRetryMessage = $_.Exception.Message
+                if (Test-NodeLlamaCppPeerInstallCrash $repairRetryMessage) {
+                    Repair-BrokenOpenClawWindowsInstall -Reason $repairRetryMessage
+                    Invoke-Npm install -g openclaw@latest --legacy-peer-deps
+                    return
+                }
                 Reinstall-WindowsNodeEnvironment -Reason $repairRetryMessage
-                Invoke-Npm install -g openclaw@latest
+                Repair-BrokenOpenClawWindowsInstall -Reason $repairRetryMessage
+                Invoke-Npm install -g openclaw@latest --legacy-peer-deps
             }
             return
         }
@@ -1073,17 +1162,30 @@ function Install-OpenClawWithNpm {
             Write-WarnMsg 'npm install reported a missing Git dependency; ensuring Git and retrying once'
             Ensure-Git
             try {
-                Invoke-Npm install -g openclaw@latest
+                Repair-BrokenOpenClawWindowsInstall -Reason $installMessage
+                Invoke-Npm install -g openclaw@latest --legacy-peer-deps
             } catch {
                 $retryMessage = $_.Exception.Message
+                if (Test-NodeLlamaCppPeerInstallCrash $retryMessage) {
+                    Repair-BrokenOpenClawWindowsInstall -Reason $retryMessage
+                    Invoke-Npm install -g openclaw@latest --legacy-peer-deps
+                    return
+                }
                 if (Test-NodeCrashMessage $retryMessage) {
                     Repair-WindowsNodeEnvironment -Reason $retryMessage
                     try {
-                        Invoke-Npm install -g openclaw@latest
+                        Repair-BrokenOpenClawWindowsInstall -Reason $retryMessage
+                        Invoke-Npm install -g openclaw@latest --legacy-peer-deps
                     } catch {
                         $retryRepairMessage = $_.Exception.Message
+                        if (Test-NodeLlamaCppPeerInstallCrash $retryRepairMessage) {
+                            Repair-BrokenOpenClawWindowsInstall -Reason $retryRepairMessage
+                            Invoke-Npm install -g openclaw@latest --legacy-peer-deps
+                            return
+                        }
                         Reinstall-WindowsNodeEnvironment -Reason $retryRepairMessage
-                        Invoke-Npm install -g openclaw@latest
+                        Repair-BrokenOpenClawWindowsInstall -Reason $retryRepairMessage
+                        Invoke-Npm install -g openclaw@latest --legacy-peer-deps
                     }
                     return
                 }
@@ -1099,6 +1201,19 @@ function Install-OpenClawWithNpm {
 function Ensure-OpenClaw {
     Write-Info 'Installing OpenClaw'
     Refresh-Path
+    Add-PathEntries (Get-SystemNodeDirectories)
+
+    $existingOpenClaw = Get-OpenClawCommand
+    if (-not [string]::IsNullOrWhiteSpace($existingOpenClaw)) {
+        $existingRuntimeError = Get-OpenClawRuntimeError
+        if (-not [string]::IsNullOrWhiteSpace($existingRuntimeError)) {
+            Write-WarnMsg "Detected broken OpenClaw command: $existingOpenClaw"
+            Write-WarnMsg "OpenClaw runtime check failed before install: $existingRuntimeError"
+            Repair-BrokenOpenClawWindowsInstall -Reason $existingRuntimeError
+            Refresh-Path
+            Add-PathEntries (Get-SystemNodeDirectories)
+        }
+    }
 
     $installedVersion = Get-InstalledOpenClawVersion
     $latestVersion = Get-LatestOpenClawVersion
@@ -1132,11 +1247,23 @@ function Ensure-OpenClaw {
     Refresh-Path
     Add-PathEntries (Get-SystemNodeDirectories)
     $currentVersion = Get-InstalledOpenClawVersion
+    $currentRuntimeError = ''
+    if (-not [string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
+        $currentRuntimeError = Get-OpenClawRuntimeError
+        if (-not [string]::IsNullOrWhiteSpace($currentRuntimeError)) {
+            $installMessages.Add("post-official runtime check failed: $currentRuntimeError")
+            Write-WarnMsg "OpenClaw is still not runnable after the official installer: $currentRuntimeError"
+            Repair-BrokenOpenClawWindowsInstall -Reason $currentRuntimeError
+            Refresh-Path
+            Add-PathEntries (Get-SystemNodeDirectories)
+        }
+    }
 
     if (
         [string]::IsNullOrWhiteSpace((Get-OpenClawCommand)) -or
         ($latestVersion -and [string]::IsNullOrWhiteSpace($currentVersion)) -or
-        ($latestVersion -and $currentVersion -and $currentVersion -ne $latestVersion)
+        ($latestVersion -and $currentVersion -and $currentVersion -ne $latestVersion) -or
+        (-not [string]::IsNullOrWhiteSpace($currentRuntimeError))
     ) {
         try {
             Install-OpenClawWithNpm
@@ -1148,16 +1275,29 @@ function Ensure-OpenClaw {
 
     Refresh-Path
     Add-PathEntries (Get-SystemNodeDirectories)
+    Ensure-NodeForOpenClaw
+    $finalRuntimeError = ''
+    if (-not [string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
+        $finalRuntimeError = Get-OpenClawRuntimeError
+    }
 
-    if ([string]::IsNullOrWhiteSpace((Get-OpenClawCommand))) {
+    if ([string]::IsNullOrWhiteSpace((Get-OpenClawCommand)) -or -not [string]::IsNullOrWhiteSpace($finalRuntimeError)) {
         $details = ($installMessages | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join ' | '
+        if (-not [string]::IsNullOrWhiteSpace($finalRuntimeError)) {
+            if (-not [string]::IsNullOrWhiteSpace($details)) {
+                $details = "$details | "
+            }
+            $details = "${details}runtime check failed: $finalRuntimeError"
+        }
         if ([string]::IsNullOrWhiteSpace($details)) {
             $details = 'no installer output captured'
         }
-        Throw-Fail "OpenClaw command not found after installation. Recommended Windows paths: 1) iwr -useb https://openclaw.ai/install.ps1 | iex 2) npm install -g openclaw@latest 3) WSL2 Ubuntu. Details: $details"
+        if (Test-OpenClawBrokenInstallMessage $finalRuntimeError) {
+            Write-WarnMsg 'Detected a broken OpenClaw shim or partially removed node_modules tree after installation'
+        }
+        Throw-Fail "OpenClaw is still not runnable after installation. Recommended Windows paths: 1) iwr -useb https://openclaw.ai/install.ps1 | iex 2) npm install -g openclaw@latest --legacy-peer-deps 3) WSL2 Ubuntu. Details: $details"
     }
 
-    Ensure-NodeForOpenClaw
     Write-Info "OpenClaw version: $(((Invoke-OpenClaw --version) | Select-Object -Last 1).Trim())"
 }
 
