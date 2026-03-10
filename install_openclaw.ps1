@@ -1368,13 +1368,17 @@ function Remove-OpenClawPackage {
     foreach ($pathValue in @(
         'C:\Program Files\nodejs\openclaw.cmd',
         'C:\Program Files\nodejs\openclaw',
+        'C:\Program Files\nodejs\openclaw.ps1',
         'C:\Program Files (x86)\nodejs\openclaw.cmd',
         'C:\Program Files (x86)\nodejs\openclaw',
+        'C:\Program Files (x86)\nodejs\openclaw.ps1',
         (Join-Path $env:APPDATA 'npm\openclaw.cmd'),
         (Join-Path $env:APPDATA 'npm\openclaw'),
+        (Join-Path $env:APPDATA 'npm\openclaw.ps1'),
         (Join-Path $env:APPDATA 'npm\node_modules\openclaw'),
         (Join-Path $HOME '.npm-global\openclaw.cmd'),
         (Join-Path $HOME '.npm-global\openclaw'),
+        (Join-Path $HOME '.npm-global\openclaw.ps1'),
         (Join-Path $HOME '.npm-global\node_modules\openclaw')
     )) {
         Remove-PathSafe $pathValue
