@@ -11,7 +11,7 @@
 - Linux/macOS 后台服务强制优先使用系统 Node，不使用 `nvm/fnm/asdf/volta` 的运行时
 - 自动检测 `openclaw` 是否已是 npm 最新版，是则跳过重装
 - 自动安装或升级 `openclaw`
-- 自动以无交互方式完成 `OpenClaw onboard`
+- 不运行 `OpenClaw onboard`，直接写入配置并启动 Gateway
 - 自动写入 `gateway.mode=local`、`gateway.bind=loopback`、`gateway.port`
 - 运行时可输入自定义模型 ID，不输入则默认 `gpt-5.3-codex`
 - 自动写入 `https://newapi.megabyai.cc/v1` 的 OpenAI 兼容配置
@@ -47,6 +47,7 @@ iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-in
 
 - 优先调用官方安装脚本：`iwr -useb https://openclaw.ai/install.ps1 | iex`
 - 如果官方脚本失败，再回退到：`npm install -g openclaw@latest`
+- 不进入新手引导，直接写入第三方 API 和 Gateway 配置
 - 写入 `%USERPROFILE%\.openclaw\.env`
 - 安装/升级 `openclaw`
 - 初始化并修复 Gateway
@@ -116,6 +117,7 @@ Remove-Item -Recurse -Force "$HOME\.openclaw"
 - 如果你更偏向 Linux 体验，推荐 `WSL2 Ubuntu`
 - 在 `WSL2` 中如果你只安装 OpenClaw，可直接运行：`curl -fsSL https://openclaw.ai/install.sh | bash`
 - 在 `WSL2` 中如果你还需要本仓库自动写入第三方 API 配置，继续使用 `install_openclaw.sh`
+- 本仓库脚本不会进入 `openclaw onboard` 新手引导，而是直接生成配置并启动服务
 - Windows 宿主机访问 WSL2 Gateway 时，优先尝试：`http://localhost:18789/`
 
 ### 方法三：使用 WSL2（强烈推荐）

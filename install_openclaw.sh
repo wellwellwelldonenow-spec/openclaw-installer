@@ -1405,28 +1405,12 @@ bootstrap_openclaw() {
   local config_home
   config_home="${HOME}/.openclaw"
 
-  if [ -d "$config_home" ] && [ -n "$(find "$config_home" -maxdepth 1 -type f 2>/dev/null)" ]; then
-    log "检测到已有 OpenClaw 配置，跳过 onboard"
+  mkdir -p "$config_home"
+
+  if [ -n "$(find "$config_home" -maxdepth 1 -type f 2>/dev/null)" ]; then
+    log "检测到已有 OpenClaw 配置，跳过 onboard，直接更新配置"
   else
-    log "无交互初始化 OpenClaw"
-    if ! openclaw onboard \
-      --non-interactive \
-      --accept-risk \
-      --mode local \
-      --auth-choice custom-api-key \
-      --custom-provider-id "$PROVIDER_ID" \
-      --custom-compatibility openai \
-      --custom-base-url "$BASE_URL" \
-      --custom-model-id "$MODEL_ID" \
-      --custom-api-key "$NEWAPI_API_KEY" \
-      --gateway-port "$OPENCLAW_PORT" \
-      --gateway-bind loopback \
-      --skip-daemon \
-      --skip-health \
-      --skip-skills; then
-      warn "无交互 onboard 失败，回退到最小初始化流程"
-      mkdir -p "$config_home"
-    fi
+    log "跳过 OpenClaw onboard，直接创建配置并写入参数"
   fi
 }
 

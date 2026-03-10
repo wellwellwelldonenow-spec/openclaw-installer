@@ -1190,18 +1190,13 @@ function Get-ConfigPath {
 
 function Ensure-OpenClawBootstrap {
     $configHome = Join-Path $HOME '.openclaw'
-    $hasConfig = (Test-Path $configHome) -and ((Get-ChildItem -Path $configHome -File -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)
+    New-Item -ItemType Directory -Path $configHome -Force | Out-Null
+    $hasConfig = (Get-ChildItem -Path $configHome -File -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0
 
     if ($hasConfig) {
-        Write-Info 'Existing OpenClaw config detected; skipping onboard'
+        Write-Info 'Existing OpenClaw config detected; skipping onboard and updating config directly'
     } else {
-        Write-Info 'Running non-interactive OpenClaw bootstrap'
-        try {
-            Invoke-OpenClaw onboard --non-interactive --accept-risk --mode local --auth-choice custom-api-key --custom-provider-id $ProviderId --custom-compatibility openai --custom-base-url $BaseUrl --custom-model-id $ModelId --custom-api-key $ApiKey --gateway-port $GatewayPort --gateway-bind loopback --skip-daemon --skip-health --skip-skills
-        } catch {
-            Write-WarnMsg 'Non-interactive onboard failed; falling back to minimal initialization'
-            New-Item -ItemType Directory -Path $configHome -Force | Out-Null
-        }
+        Write-Info 'Skipping OpenClaw onboard; preparing config directory for direct configuration'
     }
 }
 
