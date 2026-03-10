@@ -429,6 +429,36 @@ function Repair-WindowsNodeEnvironment {
     }
 }
 
+function Reinstall-WindowsNodeEnvironment {
+    param(
+        [string]$Reason = ''
+    )
+
+    Write-WarnMsg 'Attempting automatic Node.js environment reinstall'
+    if (-not [string]::IsNullOrWhiteSpace($Reason)) {
+        Write-WarnMsg "Reinstall trigger: $Reason"
+    }
+
+    Repair-WindowsNodeEnvironment -Reason $Reason
+
+    if (Test-Command 'winget') {
+        Write-Info 'Reinstalling Node.js with winget'
+        try { winget uninstall --exact --id OpenJS.NodeJS --accept-source-agreements | Out-Null } catch {}
+        try { winget uninstall --exact --id OpenJS.NodeJS.LTS --accept-source-agreements | Out-Null } catch {}
+        winget install --exact --id OpenJS.NodeJS --accept-source-agreements --accept-package-agreements --force | Out-Null
+    } elseif (Test-Command 'choco') {
+        Write-Info 'Reinstalling Node.js with Chocolatey'
+        try { choco uninstall nodejs -y | Out-Null } catch {}
+        choco install nodejs -y --force | Out-Null
+    } else {
+        Throw-Fail 'Automatic Node.js reinstall requires winget or Chocolatey. Install Node.js 22 x64 manually first.'
+    }
+
+    Refresh-Path
+    Add-PathEntries (Get-SystemNodeDirectories)
+    Clear-NpmCacheDirectories
+}
+
 function Invoke-NativeCommandSafe {
     param(
         [Parameter(Mandatory = $true)]
@@ -841,7 +871,14 @@ function Ensure-NodeForOpenClaw {
         $healthMessage = $_.Exception.Message
         Write-WarnMsg "Node/npm health check failed: $healthMessage"
         Repair-WindowsNodeEnvironment -Reason $healthMessage
-        Assert-NodeAndNpmHealthy
+        try {
+            Assert-NodeAndNpmHealthy
+        } catch {
+            $retryHealthMessage = $_.Exception.Message
+            Write-WarnMsg "Node/npm is still unhealthy after cleanup repair: $retryHealthMessage"
+            Reinstall-WindowsNodeEnvironment -Reason $retryHealthMessage
+            Assert-NodeAndNpmHealthy
+        }
     }
 
     $major = Get-NodeMajorVersion
@@ -865,7 +902,13 @@ function Install-OpenClawWithNpm {
         $installMessage = $_.Exception.Message
         if (Test-NodeCrashMessage $installMessage) {
             Repair-WindowsNodeEnvironment -Reason $installMessage
-            Invoke-Npm install -g openclaw@latest
+            try {
+                Invoke-Npm install -g openclaw@latest
+            } catch {
+                $repairRetryMessage = $_.Exception.Message
+                Reinstall-WindowsNodeEnvironment -Reason $repairRetryMessage
+                Invoke-Npm install -g openclaw@latest
+            }
             return
         }
 
@@ -878,7 +921,13 @@ function Install-OpenClawWithNpm {
                 $retryMessage = $_.Exception.Message
                 if (Test-NodeCrashMessage $retryMessage) {
                     Repair-WindowsNodeEnvironment -Reason $retryMessage
-                    Invoke-Npm install -g openclaw@latest
+                    try {
+                        Invoke-Npm install -g openclaw@latest
+                    } catch {
+                        $retryRepairMessage = $_.Exception.Message
+                        Reinstall-WindowsNodeEnvironment -Reason $retryRepairMessage
+                        Invoke-Npm install -g openclaw@latest
+                    }
                     return
                 }
                 throw
