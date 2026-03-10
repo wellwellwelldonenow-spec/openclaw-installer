@@ -52,6 +52,7 @@ iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-in
 - 写入 `%USERPROFILE%\.openclaw\.env`
 - 安装/升级 `openclaw`
 - 自动检查 `node/npm` 环境，遇到 `3221225477` 时提示排查杀毒软件和 Node 损坏
+- 检测到 `node/npm` 崩溃时自动清理 npm 缓存、旧的 OpenClaw shim 并重试一次
 - 初始化并修复 Gateway
 
 ### 方法一：使用官方安装脚本（推荐）

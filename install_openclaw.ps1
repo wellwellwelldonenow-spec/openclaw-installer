@@ -318,6 +318,20 @@ function Get-NativeCrashHint {
     return $null
 }
 
+function Test-NodeCrashMessage {
+    param(
+        [string]$Message
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        return $false
+    }
+
+    return $Message -match '3221225477' -or
+        $Message -match '0xC0000005' -or
+        $Message -match 'access violation'
+}
+
 function Get-CommandCandidates {
     param(
         [Parameter(Mandatory = $true)]
@@ -356,6 +370,63 @@ function Get-AntivirusProducts {
     }
 
     return $products
+}
+
+function Remove-PathIfExists([string]$PathValue) {
+    if ([string]::IsNullOrWhiteSpace($PathValue)) { return }
+    Remove-Item -Path $PathValue -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+function Clear-NpmCacheDirectories {
+    foreach ($cachePath in @(
+        (Join-Path $env:APPDATA 'npm-cache'),
+        (Join-Path $env:LOCALAPPDATA 'npm-cache')
+    )) {
+        if (Test-Path $cachePath) {
+            Write-WarnMsg "Removing npm cache directory: $cachePath"
+            Remove-PathIfExists $cachePath
+        }
+    }
+}
+
+function Remove-StaleOpenClawShims {
+    foreach ($pathValue in @(
+        (Join-Path $env:APPDATA 'npm\openclaw.cmd'),
+        (Join-Path $env:APPDATA 'npm\openclaw'),
+        (Join-Path $env:APPDATA 'npm\openclaw.ps1'),
+        (Join-Path $env:APPDATA 'npm\node_modules\openclaw'),
+        (Join-Path $HOME '.npm-global\openclaw.cmd'),
+        (Join-Path $HOME '.npm-global\openclaw'),
+        (Join-Path $HOME '.npm-global\openclaw.ps1'),
+        (Join-Path $HOME '.npm-global\node_modules\openclaw')
+    )) {
+        Remove-PathIfExists $pathValue
+    }
+}
+
+function Repair-WindowsNodeEnvironment {
+    param(
+        [string]$Reason = ''
+    )
+
+    Write-WarnMsg 'Attempting automatic repair for the Windows Node/npm environment'
+    if (-not [string]::IsNullOrWhiteSpace($Reason)) {
+        Write-WarnMsg "Repair trigger: $Reason"
+    }
+
+    Refresh-Path
+    Add-PathEntries (Get-SystemNodeDirectories)
+    Clear-NpmCacheDirectories
+    Remove-StaleOpenClawShims
+
+    $nodeCandidates = Get-CommandCandidates 'node'
+    if ($nodeCandidates.Count -gt 1) {
+        Write-WarnMsg "Multiple node executables remain after repair prep: $($nodeCandidates -join ', ')"
+    }
+
+    if ((Test-Command 'node') -and -not (Test-NodeRuntimeHealthy)) {
+        Write-WarnMsg 'node.exe still fails the basic runtime check after cache cleanup. Antivirus interference or a damaged Node.js install is still likely'
+    }
 }
 
 function Invoke-NativeCommandSafe {
@@ -764,7 +835,14 @@ function Invoke-OfficialWindowsInstaller {
 
 function Ensure-NodeForOpenClaw {
     Prefer-SystemNodePath | Out-Null
-    Assert-NodeAndNpmHealthy
+    try {
+        Assert-NodeAndNpmHealthy
+    } catch {
+        $healthMessage = $_.Exception.Message
+        Write-WarnMsg "Node/npm health check failed: $healthMessage"
+        Repair-WindowsNodeEnvironment -Reason $healthMessage
+        Assert-NodeAndNpmHealthy
+    }
 
     $major = Get-NodeMajorVersion
     if ($major -ge 22) {
@@ -784,13 +862,31 @@ function Install-OpenClawWithNpm {
     try {
         Invoke-Npm install -g openclaw@latest
     } catch {
-        if (-not (Test-Command 'git') -or (Test-NpmGitMissing $_.Exception.Message)) {
+        $installMessage = $_.Exception.Message
+        if (Test-NodeCrashMessage $installMessage) {
+            Repair-WindowsNodeEnvironment -Reason $installMessage
+            Invoke-Npm install -g openclaw@latest
+            return
+        }
+
+        if (-not (Test-Command 'git') -or (Test-NpmGitMissing $installMessage)) {
             Write-WarnMsg 'npm install reported a missing Git dependency; ensuring Git and retrying once'
             Ensure-Git
-            Invoke-Npm install -g openclaw@latest
-        } else {
-            throw
+            try {
+                Invoke-Npm install -g openclaw@latest
+            } catch {
+                $retryMessage = $_.Exception.Message
+                if (Test-NodeCrashMessage $retryMessage) {
+                    Repair-WindowsNodeEnvironment -Reason $retryMessage
+                    Invoke-Npm install -g openclaw@latest
+                    return
+                }
+                throw
+            }
+            return
         }
+
+        throw
     }
 }
 
