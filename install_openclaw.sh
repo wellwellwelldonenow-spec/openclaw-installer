@@ -348,7 +348,7 @@ npm_install_openclaw_cmd() {
     npm_config_update_notifier=false \
     npm_config_jobs=1 \
     NODE_OPTIONS="$node_opts" \
-    npm install -g openclaw@latest
+    npm install -g openclaw@latest --legacy-peer-deps
 }
 
 run_privileged() {
@@ -1214,32 +1214,39 @@ latest_openclaw_version() {
   npm view openclaw version --silent 2>/dev/null | tail -n 1 | tr -d '[:space:]'
 }
 
-install_openclaw() {
-  log "安装 OpenClaw"
-  ensure_npm_global_bin_in_path
-  ensure_linux_temp_swap
+openclaw_runtime_error() {
+  local output status
 
-  local installed_version="" latest_version="" prefix="" install_ok=0 force_reinstall=0
-  installed_version="$(installed_openclaw_version 2>/dev/null || true)"
-  latest_version="$(latest_openclaw_version 2>/dev/null || true)"
+  command -v openclaw >/dev/null 2>&1 || return 1
 
-  if [ "$OS" = "linux" ] && openclaw_path_uses_version_manager; then
-    warn "检测到 openclaw 来自版本管理器路径：$(command -v openclaw)，将改为系统 npm 安装"
-    force_reinstall=1
+  set +e
+  output="$(openclaw --version 2>&1)"
+  status=$?
+  set -e
+
+  [ "$status" -eq 0 ] && return 1
+
+  if [ -z "$output" ]; then
+    output="openclaw --version exited with status $status"
   fi
 
-  if [ -n "${installed_version:-}" ] && [ -n "${latest_version:-}" ] && [ "${installed_version:-}" = "${latest_version:-}" ] && [ "$force_reinstall" -eq 0 ]; then
-    log "检测到已安装最新版 OpenClaw：${installed_version:-}，跳过安装"
-    return 0
+  printf '%s\n' "$output"
+}
+
+repair_broken_openclaw_install() {
+  local reason="${1:-}"
+
+  warn "Detected broken OpenClaw installation remnants; cleaning up before retry"
+  if [ -n "$reason" ]; then
+    warn "OpenClaw runtime check failed: $reason"
   fi
 
-  if [ -n "${installed_version:-}" ] && [ -n "${latest_version:-}" ]; then
-    log "检测到本地 OpenClaw：${installed_version:-}，npm 最新版：${latest_version:-}，将执行升级"
-  elif [ -n "${installed_version:-}" ]; then
-    warn "已安装 OpenClaw：${installed_version:-}，但未能确认 npm 最新版本，将尝试升级"
-  else
-    log "未检测到 OpenClaw，将执行安装"
-  fi
+  remove_openclaw_global_installs
+  hash -r 2>/dev/null || true
+}
+
+attempt_openclaw_install() {
+  local prefix="" install_ok=0
 
   prefix="$(npm config get prefix 2>/dev/null || true)"
 
@@ -1266,12 +1273,58 @@ install_openclaw() {
           printf '%s' '--max-old-space-size=512'
         fi
       )" \
-      npm install -g openclaw@latest
+      npm install -g openclaw@latest --legacy-peer-deps
   fi
+}
+
+install_openclaw() {
+  log "安装 OpenClaw"
+  ensure_npm_global_bin_in_path
+  ensure_linux_temp_swap
+
+  local installed_version="" latest_version="" force_reinstall=0 existing_runtime_error="" current_runtime_error=""
+  installed_version="$(installed_openclaw_version 2>/dev/null || true)"
+  latest_version="$(latest_openclaw_version 2>/dev/null || true)"
+
+  existing_runtime_error="$(openclaw_runtime_error 2>/dev/null || true)"
+  if [ -n "$existing_runtime_error" ]; then
+    repair_broken_openclaw_install "$existing_runtime_error"
+    installed_version=""
+    force_reinstall=1
+  fi
+
+  if [ "$OS" = "linux" ] && openclaw_path_uses_version_manager; then
+    warn "检测到 openclaw 来自版本管理器路径：$(command -v openclaw)，将改为系统 npm 安装"
+    force_reinstall=1
+  fi
+
+  if [ -n "${installed_version:-}" ] && [ -n "${latest_version:-}" ] && [ "${installed_version:-}" = "${latest_version:-}" ] && [ "$force_reinstall" -eq 0 ]; then
+    log "检测到已安装最新版 OpenClaw：${installed_version:-}，跳过安装"
+    return 0
+  fi
+
+  if [ -n "${installed_version:-}" ] && [ -n "${latest_version:-}" ]; then
+    log "检测到本地 OpenClaw：${installed_version:-}，npm 最新版：${latest_version:-}，将执行升级"
+  elif [ -n "${installed_version:-}" ]; then
+    warn "已安装 OpenClaw：${installed_version:-}，但未能确认 npm 最新版本，将尝试升级"
+  else
+    log "未检测到 OpenClaw，将执行安装"
+  fi
+
+  attempt_openclaw_install
 
   ensure_npm_global_bin_in_path
   persist_openclaw_cli_path
   hash -r 2>/dev/null || true
+  current_runtime_error="$(openclaw_runtime_error 2>/dev/null || true)"
+  if [ -n "$current_runtime_error" ]; then
+    repair_broken_openclaw_install "$current_runtime_error"
+    attempt_openclaw_install
+    ensure_npm_global_bin_in_path
+    persist_openclaw_cli_path
+    hash -r 2>/dev/null || true
+    current_runtime_error="$(openclaw_runtime_error 2>/dev/null || true)"
+  fi
   command -v openclaw >/dev/null 2>&1 || fail "OpenClaw 安装后未找到命令"
   log "OpenClaw 版本：$(openclaw --version)"
 }
