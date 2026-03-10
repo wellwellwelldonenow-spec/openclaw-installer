@@ -54,6 +54,7 @@ iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-in
 - 自动检查 `node/npm` 环境，遇到 `3221225477` 时提示排查杀毒软件和 Node 损坏
 - 检测到 `node/npm` 崩溃时自动清理 npm 缓存、旧的 OpenClaw shim 并重试一次
 - 若清理后仍异常，自动通过 `winget` 或 `Chocolatey` 重装 Node.js 环境
+- 自动打印 `node/npm` 路径、关键环境变量、`APPDATA/TEMP` 可写性等诊断摘要
 - 初始化并修复 Gateway
 
 ### 方法一：使用官方安装脚本（推荐）

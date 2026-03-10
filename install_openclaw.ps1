@@ -377,6 +377,156 @@ function Remove-PathIfExists([string]$PathValue) {
     Remove-Item -Path $PathValue -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+function Test-DirectoryWritable {
+    param(
+        [string]$PathValue
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue) -or -not (Test-Path $PathValue -PathType Container)) {
+        return $false
+    }
+
+    $probeFile = Join-Path $PathValue ("openclaw-write-test-{0}.tmp" -f ([guid]::NewGuid().ToString('N')))
+    try {
+        Set-Content -Path $probeFile -Value 'ok' -Encoding ASCII -ErrorAction Stop
+        Remove-Item -Path $probeFile -Force -ErrorAction SilentlyContinue
+        return $true
+    } catch {
+        Remove-Item -Path $probeFile -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+}
+
+function Ensure-UsableDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PathValue,
+        [Parameter(Mandatory = $true)]
+        [string]$Label
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        Throw-Fail "$Label path is empty"
+    }
+
+    New-Item -ItemType Directory -Path $PathValue -Force | Out-Null
+    if (-not (Test-DirectoryWritable $PathValue)) {
+        Throw-Fail "$Label path is not writable: $PathValue"
+    }
+
+    return $PathValue
+}
+
+function Set-ProcessEnvironmentVariable {
+    param(
+        [string]$Name,
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { return }
+    Set-Item -Path "env:$Name" -Value $Value
+}
+
+function Remove-ProcessEnvironmentVariable([string]$Name) {
+    if ([string]::IsNullOrWhiteSpace($Name)) { return }
+    Remove-Item -Path "env:$Name" -ErrorAction SilentlyContinue
+}
+
+function Get-DefaultNpmPrefixPath {
+    return (Join-Path $env:APPDATA 'npm')
+}
+
+function Get-DefaultNpmCachePath {
+    return (Join-Path $env:LOCALAPPDATA 'npm-cache')
+}
+
+function Repair-WindowsProcessEnvironment {
+    Write-WarnMsg 'Normalizing process environment for Node/npm'
+
+    $safeTemp = Ensure-UsableDirectory -PathValue (Join-Path $HOME '.openclaw\tmp') -Label 'Safe temp'
+    foreach ($name in @('TEMP', 'TMP')) {
+        $currentValue = (Get-Item -Path "env:$name" -ErrorAction SilentlyContinue).Value
+        if ([string]::IsNullOrWhiteSpace($currentValue) -or -not (Test-DirectoryWritable $currentValue)) {
+            Write-WarnMsg "$name is missing or not writable. Switching to $safeTemp"
+            Set-ProcessEnvironmentVariable -Name $name -Value $safeTemp
+        }
+    }
+
+    $safePrefix = Ensure-UsableDirectory -PathValue (Get-DefaultNpmPrefixPath) -Label 'npm prefix'
+    $safeCache = Ensure-UsableDirectory -PathValue (Get-DefaultNpmCachePath) -Label 'npm cache'
+    foreach ($name in @('NPM_CONFIG_PREFIX', 'npm_config_prefix')) {
+        Set-ProcessEnvironmentVariable -Name $name -Value $safePrefix
+    }
+    foreach ($name in @('NPM_CONFIG_CACHE', 'npm_config_cache')) {
+        Set-ProcessEnvironmentVariable -Name $name -Value $safeCache
+    }
+
+    foreach ($name in @('NODE_OPTIONS', 'NODE_PATH', 'NODE_EXTRA_CA_CERTS', 'OPENSSL_CONF', 'SSL_CERT_FILE', 'SSL_CERT_DIR')) {
+        $currentValue = (Get-Item -Path "env:$name" -ErrorAction SilentlyContinue).Value
+        if (-not [string]::IsNullOrWhiteSpace($currentValue)) {
+            Write-WarnMsg "Clearing $name for the current install session"
+            Remove-ProcessEnvironmentVariable $name
+        }
+    }
+
+    foreach ($name in @('APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOME')) {
+        $currentValue = (Get-Item -Path "env:$name" -ErrorAction SilentlyContinue).Value
+        if ([string]::IsNullOrWhiteSpace($currentValue)) {
+            continue
+        }
+        if (($name -in @('APPDATA', 'LOCALAPPDATA')) -and -not (Test-DirectoryWritable $currentValue)) {
+            Write-WarnMsg "$name is not writable: $currentValue"
+        }
+    }
+}
+
+function Show-WindowsNodeEnvironmentDiagnostics {
+    param(
+        [string]$Reason = ''
+    )
+
+    Write-WarnMsg 'Windows Node/npm diagnostics summary'
+    if (-not [string]::IsNullOrWhiteSpace($Reason)) {
+        Write-WarnMsg "Diagnostic trigger: $Reason"
+    }
+
+    foreach ($toolName in @('node', 'npm')) {
+        $candidates = Get-CommandCandidates $toolName
+        if ($candidates.Count -gt 0) {
+            Write-WarnMsg "$toolName candidates: $($candidates -join ', ')"
+        } else {
+            Write-WarnMsg "$toolName candidates: none"
+        }
+    }
+
+    foreach ($name in @('APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'USERPROFILE', 'HOME', 'NPM_CONFIG_PREFIX', 'npm_config_prefix', 'NPM_CONFIG_CACHE', 'npm_config_cache', 'NODE_OPTIONS')) {
+        $value = (Get-Item -Path "env:$name" -ErrorAction SilentlyContinue).Value
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            Write-WarnMsg "$name=<empty>"
+            continue
+        }
+
+        if ($name -in @('APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP', 'USERPROFILE', 'HOME', 'NPM_CONFIG_PREFIX', 'npm_config_prefix', 'NPM_CONFIG_CACHE', 'npm_config_cache')) {
+            $exists = Test-Path $value
+            $writable = if ($exists) { Test-DirectoryWritable $value } else { $false }
+            Write-WarnMsg "$name=$value | exists=$exists | writable=$writable"
+        } else {
+            Write-WarnMsg "$name=$value"
+        }
+    }
+
+    foreach ($npmrcPath in @(
+        (Join-Path $HOME '.npmrc'),
+        (Join-Path $env:APPDATA 'npm\etc\npmrc'),
+        'C:\Program Files\nodejs\etc\npmrc'
+    )) {
+        if (Test-Path $npmrcPath) {
+            Write-WarnMsg "npmrc detected: $npmrcPath"
+        }
+    }
+}
+
 function Clear-NpmCacheDirectories {
     foreach ($cachePath in @(
         (Join-Path $env:APPDATA 'npm-cache'),
@@ -416,6 +566,7 @@ function Repair-WindowsNodeEnvironment {
 
     Refresh-Path
     Add-PathEntries (Get-SystemNodeDirectories)
+    Repair-WindowsProcessEnvironment
     Clear-NpmCacheDirectories
     Remove-StaleOpenClawShims
 
@@ -456,6 +607,7 @@ function Reinstall-WindowsNodeEnvironment {
 
     Refresh-Path
     Add-PathEntries (Get-SystemNodeDirectories)
+    Repair-WindowsProcessEnvironment
     Clear-NpmCacheDirectories
 }
 
@@ -521,7 +673,11 @@ function Invoke-Npm {
     $output = $result.Output
     $exitCode = $result.ExitCode
     if ($exitCode -ne 0) {
-        $message = ($output | Out-String).Trim()
+        $rawOutput = ($output | Out-String)
+        if ($exitCode -eq 3221225477 -or (Test-NodeCrashMessage $rawOutput)) {
+            Show-WindowsNodeEnvironmentDiagnostics -Reason "npm crash exit code $exitCode"
+        }
+        $message = $rawOutput.Trim()
         if ([string]::IsNullOrWhiteSpace($message)) {
             $message = "npm failed with exit code $exitCode"
         }
@@ -706,6 +862,7 @@ function Assert-NodeAndNpmHealthy {
 
 function Invoke-WindowsEnvironmentSelfCheck {
     Write-Info 'Running Windows environment self-check'
+    Repair-WindowsProcessEnvironment
     Write-Info "OS architecture: $env:PROCESSOR_ARCHITECTURE"
     if ($env:PROCESSOR_ARCHITEW6432) {
         Write-Info "WoW64 host architecture: $env:PROCESSOR_ARCHITEW6432"
