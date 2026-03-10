@@ -303,6 +303,38 @@ function Get-OpenClawCommand {
     )
 }
 
+function Invoke-NativeCommandSafe {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CommandPath,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $hasNativeErrorPreference = $null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)
+    if ($hasNativeErrorPreference) {
+        $previousNativeErrorPreference = $script:PSNativeCommandUseErrorActionPreference
+    }
+
+    try {
+        if ($hasNativeErrorPreference) {
+            $script:PSNativeCommandUseErrorActionPreference = $false
+        }
+
+        $output = & $CommandPath @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        if ($hasNativeErrorPreference) {
+            $script:PSNativeCommandUseErrorActionPreference = $previousNativeErrorPreference
+        }
+    }
+
+    return @{
+        Output = $output
+        ExitCode = $exitCode
+    }
+}
+
 function Invoke-Npm {
     param(
         [Parameter(ValueFromRemainingArguments = $true)]
@@ -314,8 +346,9 @@ function Invoke-Npm {
         Throw-Fail 'npm.cmd not found; Node.js may not be installed correctly'
     }
 
-    $output = & $npmCommand @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    $result = Invoke-NativeCommandSafe $npmCommand @Arguments
+    $output = $result.Output
+    $exitCode = $result.ExitCode
     if ($exitCode -ne 0) {
         $message = ($output | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($message)) {
@@ -338,8 +371,9 @@ function Invoke-OpenClaw {
         Throw-Fail 'openclaw.cmd not found; complete OpenClaw installation first'
     }
 
-    $output = & $openclawCommand @Arguments 2>&1
-    $exitCode = $LASTEXITCODE
+    $result = Invoke-NativeCommandSafe $openclawCommand @Arguments
+    $output = $result.Output
+    $exitCode = $result.ExitCode
     if ($exitCode -ne 0) {
         $message = ($output | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($message)) {
@@ -791,8 +825,9 @@ function Invoke-OpenClawWithServiceEnv {
         $env:OPENCLAW_STATE_DIR = $StateDir
         $env:NODE_COMPILE_CACHE = Join-Path $env:TEMP 'openclaw-compile-cache'
         $env:OPENCLAW_NO_RESPAWN = '1'
-        $output = & $openclawPath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
+        $result = Invoke-NativeCommandSafe $openclawPath @Arguments
+        $output = $result.Output
+        $exitCode = $result.ExitCode
         if ($exitCode -ne 0) {
             $message = ($output | Out-String).Trim()
             if ([string]::IsNullOrWhiteSpace($message)) {
