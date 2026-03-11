@@ -16,6 +16,7 @@ PLUGIN_ID=""
 RESTART_GATEWAY=1
 RUN_TEST=0
 INTERACTIVE_MENU=0
+FEISHU_SELECTED_GUIDE_MODE=""
 
 log_info() {
   printf '\033[1;34m[INFO]\033[0m %s\n' "$*"
@@ -188,6 +189,66 @@ wait_for_feishu_browser_login() {
   wait_for_enter $'\u7b49\u5f85\u98de\u4e66\u767b\u5f55\u8d85\u65f6\uff0c\u8bf7\u786e\u8ba4\u5df2\u767b\u5f55\u540e\u6309\u56de\u8f66\u7ee7\u7eed\uff0c\u6216\u6309 Ctrl+C \u53d6\u6d88\u3002'
 }
 
+resolve_feishu_browser_helper_path() {
+  local script_dir=""
+  local local_helper=""
+  local helper_path="${TMPDIR:-/tmp}/openclaw-feishu-browser-automation.js"
+  local helper_url="https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/feishu_browser_automation.js"
+
+  script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)"
+  local_helper="${script_dir}/feishu_browser_automation.js"
+  if [ -f "$local_helper" ]; then
+    printf '%s\n' "$local_helper"
+    return 0
+  fi
+
+  if [ ! -f "$helper_path" ]; then
+    log_info "Downloading Feishu browser automation helper" >&2
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "$helper_url" -o "$helper_path"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -qO "$helper_path" "$helper_url"
+    else
+      fail "curl or wget is required to download the Feishu browser automation helper."
+    fi
+  fi
+
+  printf '%s\n' "$helper_path"
+}
+
+invoke_feishu_browser_automation() {
+  local helper_path=""
+  local helper_output=""
+  local app_name="OpenClaw Gateway $(date +%Y%m%d-%H%M%S)"
+  local app_description="OpenClaw Feishu channel integration"
+
+  helper_path="$(resolve_feishu_browser_helper_path)"
+  log_info "Running Feishu browser automation" >&2
+  helper_output="$(node "$helper_path" --app-name "$app_name" --app-description "$app_description")" || \
+    return 1
+
+  APP_ID="$(printf '%s' "$helper_output" | node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); process.stdout.write(data.appId || '')")"
+  APP_SECRET="$(printf '%s' "$helper_output" | node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); process.stdout.write(data.appSecret || '')")"
+
+  [ -n "$APP_ID" ] && [ -n "$APP_SECRET" ] || return 1
+  log_info "Feishu browser automation completed: $APP_ID" >&2
+}
+
+invoke_feishu_browser_finalize() {
+  local helper_path=""
+  local helper_output=""
+
+  helper_path="$(resolve_feishu_browser_helper_path)"
+  log_info "Running Feishu browser post-config automation" >&2
+  helper_output="$(node "$helper_path" --mode finalize --app-id "$APP_ID" --version-notes "OpenClaw Feishu channel auto setup")" || \
+    return 1
+
+  printf '%s' "$helper_output" | node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); if (!data.published) process.exit(1)" || \
+    return 1
+
+  log_info "Feishu browser post-config completed: $APP_ID" >&2
+}
+
 select_feishu_guide_mode() {
   local choice=""
 
@@ -264,12 +325,14 @@ show_feishu_setup_guide() {
   fi
 
   guide_mode="$(select_feishu_guide_mode)"
+  FEISHU_SELECTED_GUIDE_MODE="$guide_mode"
 
   if open_method="$(open_external_url "$portal_url" "$([ "$guide_mode" = "browser" ] && printf '1' || printf '0')")"; then
     if [ "$open_method" = "browser" ]; then
       log_info $'\u5df2\u4f7f\u7528 OpenClaw \u6d4f\u89c8\u5668\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
       printf '%s\n' $'  0. \u5982\u672a\u767b\u5f55\uff0c\u8bf7\u5148\u5728 OpenClaw \u6d4f\u89c8\u5668\u5b8c\u6210\u767b\u5f55\u3001\u4f01\u4e1a\u5207\u6362\u548c\u5e94\u7528\u521b\u5efa\u3002'
       wait_for_feishu_browser_login
+      return 0
     else
       log_info $'\u5df2\u4e3a\u4f60\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
     fi
@@ -292,6 +355,7 @@ show_feishu_post_config_guide() {
   printf '%s\n' $'  2. \u786e\u8ba4\u5df2\u5f00\u901a\u6d88\u606f\u4e0e\u7fa4\u7ec4\u76f8\u5173\u6743\u9650\u3002'
   printf '%s\n' $'  3. \u8bf7\u5728 \u4e8b\u4ef6\u4e0e\u56de\u8c03 -> \u8ba2\u9605\u65b9\u5f0f \u91cc\u9009\u62e9 \u957f\u8fde\u63a5\u3002'
   printf '%s\n' $'  4. \u5e76\u6dfb\u52a0\u4e8b\u4ef6\uff1a\u63a5\u6536\u6d88\u606f\u3002'
+  printf '%s\n' $'  5. \u521b\u5efa\u7248\u672c\u5e76\u786e\u8ba4\u53d1\u5e03\u3002'
 }
 
 show_channel_menu() {
@@ -633,8 +697,18 @@ setup_slack() {
 }
 
 setup_feishu() {
+  local selected_guide_mode="$GUIDE_MODE"
+  local browser_post_config_done=0
+
   if is_interactive_terminal && { [ -z "$APP_ID" ] || [ -z "$APP_SECRET" ] || [ "$GUIDE_MODE" != "auto" ]; }; then
     show_feishu_setup_guide
+    selected_guide_mode="${FEISHU_SELECTED_GUIDE_MODE:-$GUIDE_MODE}"
+  fi
+
+  if [ "$selected_guide_mode" = "browser" ] && { [ -z "$APP_ID" ] || [ -z "$APP_SECRET" ]; }; then
+    if ! invoke_feishu_browser_automation; then
+      log_warn "Feishu browser automation failed; falling back to manual credentials input."
+    fi
   fi
 
   APP_ID="$(prompt_value "Feishu app id" "$APP_ID" 0)"
@@ -660,9 +734,20 @@ setup_feishu() {
   openclaw config set channels.feishu.requireMention true >/dev/null 2>&1 || log_warn "Failed to set feishu requireMention=true"
   restart_gateway
 
+  if [ "$selected_guide_mode" = "browser" ]; then
+    sleep 5
+    if invoke_feishu_browser_finalize; then
+      browser_post_config_done=1
+    else
+      log_warn "Feishu browser post-config automation failed; falling back to manual finishing steps."
+    fi
+  fi
+
   log_info "Feishu configured"
   printf '  app id: %s\n' "$(mask_value "$APP_ID" 8 4)"
-  show_feishu_post_config_guide
+  if [ "$browser_post_config_done" -ne 1 ]; then
+    show_feishu_post_config_guide
+  fi
   run_test_feishu
 }
 

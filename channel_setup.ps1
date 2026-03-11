@@ -96,6 +96,7 @@ function Get-ZhText {
         'feishu_ws_ready' { return (New-UnicodeText @(0x5DF2,0x4E3A,0x20,0x4F,0x70,0x65,0x6E,0x43,0x6C,0x61,0x77,0x20,0x914D,0x7F6E,0x20,0x46,0x65,0x69,0x73,0x68,0x75,0x20,0x57,0x65,0x62,0x53,0x6F,0x63,0x6B,0x65,0x74,0x20,0x8FDE,0x63A5,0x6A21,0x5F0F,0x3002)) }
         'feishu_ws_step' { return (New-UnicodeText @(0x8BF7,0x5728,0x20,0x4E8B,0x4EF6,0x4E0E,0x56DE,0x8C03,0x20,0x2D,0x3E,0x20,0x8BA2,0x9605,0x65B9,0x5F0F,0x20,0x91CC,0x9009,0x62E9,0x20,0x957F,0x8FDE,0x63A5,0x3002)) }
         'feishu_event_step' { return (New-UnicodeText @(0x5E76,0x6DFB,0x52A0,0x4E8B,0x4EF6,0xFF1A,0x63A5,0x6536,0x6D88,0x606F,0x3002)) }
+        'feishu_publish_step' { return (New-UnicodeText @(0x521B,0x5EFA,0x7248,0x672C,0x5E76,0x786E,0x8BA4,0x53D1,0x5E03,0x3002)) }
         'guide_mode_title' { return (New-UnicodeText @(0x98DE,0x4E66,0x63A5,0x5165,0x65B9,0x5F0F)) }
         'guide_mode_prompt' { return (New-UnicodeText @(0x8BF7,0x9009,0x62E9,0x98DE,0x4E66,0x63A5,0x5165,0x65B9,0x5F0F)) }
         'guide_mode_browser' { return (New-UnicodeText @(0x81EA,0x52A8,0x5316,0x6D4F,0x89C8,0x5668,0x8F85,0x52A9,0xFF08,0x4F7F,0x7528,0x20,0x4F,0x70,0x65,0x6E,0x43,0x6C,0x61,0x77,0x20,0x62,0x72,0x6F,0x77,0x73,0x65,0x72,0xFF09)) }
@@ -238,6 +239,104 @@ function Wait-ForFeishuBrowserLogin {
     Wait-ForEnter -Prompt (Get-ZhText 'feishu_browser_login_timeout')
 }
 
+function Resolve-FeishuBrowserHelperPath {
+    $localHelper = if ($PSCommandPath) {
+        Join-Path (Split-Path -Parent $PSCommandPath) 'feishu_browser_automation.js'
+    }
+    else {
+        $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($localHelper) -and (Test-Path $localHelper)) {
+        return $localHelper
+    }
+
+    $downloadedHelper = Join-Path $env:TEMP 'openclaw-feishu-browser-automation.js'
+    $helperUrl = 'https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/feishu_browser_automation.js'
+
+    if (-not (Test-Path $downloadedHelper)) {
+        Write-Info 'Downloading Feishu browser automation helper'
+        Invoke-WebRequest -UseBasicParsing -Uri $helperUrl -OutFile $downloadedHelper
+    }
+
+    return $downloadedHelper
+}
+
+function Invoke-FeishuBrowserAutomation {
+    $nodeCommand = Get-NodeCommand
+    if ([string]::IsNullOrWhiteSpace($nodeCommand)) {
+        Throw-Fail 'node.exe not found; Feishu browser automation needs Node.js.'
+    }
+
+    $helperPath = Resolve-FeishuBrowserHelperPath
+    $appName = 'OpenClaw Gateway {0}' -f (Get-Date -Format 'yyyyMMdd-HHmmss')
+    $appDescription = 'OpenClaw Feishu channel integration'
+
+    Write-Info 'Running Feishu browser automation'
+    $result = Invoke-NativeCommandSafe -Command $nodeCommand -Arguments @(
+        $helperPath,
+        '--app-name',
+        $appName,
+        '--app-description',
+        $appDescription
+    )
+
+    if ($result.ExitCode -ne 0) {
+        $message = if ([string]::IsNullOrWhiteSpace($result.Output)) {
+            'Feishu browser automation failed.'
+        }
+        else {
+            $result.Output
+        }
+        throw $message
+    }
+
+    $payload = $result.Output | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace($payload.appId) -or [string]::IsNullOrWhiteSpace($payload.appSecret)) {
+        Throw-Fail 'Feishu browser automation did not return App ID / App Secret.'
+    }
+
+    $script:AppId = [string]$payload.appId
+    $script:AppSecret = [string]$payload.appSecret
+    Write-Info ('Feishu browser automation completed: {0}' -f $script:AppId)
+}
+
+function Invoke-FeishuBrowserFinalize {
+    $nodeCommand = Get-NodeCommand
+    if ([string]::IsNullOrWhiteSpace($nodeCommand)) {
+        Throw-Fail 'node.exe not found; Feishu browser automation needs Node.js.'
+    }
+
+    $helperPath = Resolve-FeishuBrowserHelperPath
+    Write-Info 'Running Feishu browser post-config automation'
+    $result = Invoke-NativeCommandSafe -Command $nodeCommand -Arguments @(
+        $helperPath,
+        '--mode',
+        'finalize',
+        '--app-id',
+        $script:AppId,
+        '--version-notes',
+        'OpenClaw Feishu channel auto setup'
+    )
+
+    if ($result.ExitCode -ne 0) {
+        $message = if ([string]::IsNullOrWhiteSpace($result.Output)) {
+            'Feishu browser post-config automation failed.'
+        }
+        else {
+            $result.Output
+        }
+        throw $message
+    }
+
+    $payload = $result.Output | ConvertFrom-Json
+    if (-not $payload.published) {
+        Throw-Fail 'Feishu browser post-config automation did not finish publishing.'
+    }
+
+    Write-Info ('Feishu browser post-config completed: {0}' -f $script:AppId)
+}
+
 function Select-FeishuGuideMode {
     if ($script:GuideMode -in @('browser', 'manual')) {
         if ($script:GuideMode -eq 'browser' -and -not (Test-OpenClawBrowserAvailable)) {
@@ -278,7 +377,7 @@ function Select-FeishuGuideMode {
 
 function Show-FeishuSetupGuide {
     if (-not (Test-InteractiveConsole)) {
-        return
+        return $script:GuideMode
     }
 
     $guideMode = Select-FeishuGuideMode
@@ -289,6 +388,7 @@ function Show-FeishuSetupGuide {
             Write-Info (Get-ZhText 'feishu_portal_browser_opened')
             Write-Host ("  0. " + (Get-ZhText 'feishu_browser_login_tip'))
             Wait-ForFeishuBrowserLogin
+            return $guideMode
         }
         else {
             Write-Info (Get-ZhText 'feishu_portal_opened')
@@ -303,6 +403,7 @@ function Show-FeishuSetupGuide {
     Write-Host ("  3. " + (Get-ZhText 'feishu_step_bot'))
     Write-Host ("  4. " + (Get-ZhText 'feishu_step_permissions'))
     Wait-ForEnter -Prompt (Get-ZhText 'feishu_continue_prompt')
+    return $guideMode
 }
 
 function Show-FeishuPostConfigGuide {
@@ -311,6 +412,7 @@ function Show-FeishuPostConfigGuide {
     Write-Host ("  2. " + (Get-ZhText 'feishu_step_permissions'))
     Write-Host ("  3. " + (Get-ZhText 'feishu_ws_step'))
     Write-Host ("  4. " + (Get-ZhText 'feishu_event_step'))
+    Write-Host ("  5. " + (Get-ZhText 'feishu_publish_step'))
 }
 
 function Show-ChannelMenu {
@@ -827,12 +929,27 @@ function Setup-Slack {
 }
 
 function Setup-Feishu {
+    $selectedGuideMode = $script:GuideMode
+    $browserPostConfigDone = $false
     $shouldShowGuide = (Test-InteractiveConsole) -and (
         ([string]::IsNullOrWhiteSpace($script:AppId) -or [string]::IsNullOrWhiteSpace($script:AppSecret)) -or
         ($script:GuideMode -ne 'auto')
     )
     if ($shouldShowGuide) {
-        Show-FeishuSetupGuide
+        $selectedGuideMode = Show-FeishuSetupGuide
+    }
+
+    if (($selectedGuideMode -eq 'browser') -and
+        ([string]::IsNullOrWhiteSpace($script:AppId) -or [string]::IsNullOrWhiteSpace($script:AppSecret))) {
+        try {
+            Invoke-FeishuBrowserAutomation
+        }
+        catch {
+            Write-WarnMsg "Feishu browser automation failed; falling back to manual credentials input."
+            if (-not [string]::IsNullOrWhiteSpace($_.Exception.Message)) {
+                Write-WarnMsg $_.Exception.Message
+            }
+        }
     }
 
     $script:AppId = Prompt-Value -Prompt 'Feishu app id' -Current $script:AppId
@@ -863,9 +980,26 @@ function Setup-Feishu {
     try { Invoke-OpenClaw config set channels.feishu.requireMention true | Out-Null } catch { Write-WarnMsg 'Failed to set feishu requireMention=true' }
 
     Restart-Gateway
+
+    if ($selectedGuideMode -eq 'browser') {
+        Start-Sleep -Seconds 5
+        try {
+            Invoke-FeishuBrowserFinalize
+            $browserPostConfigDone = $true
+        }
+        catch {
+            Write-WarnMsg "Feishu browser post-config automation failed; falling back to manual finishing steps."
+            if (-not [string]::IsNullOrWhiteSpace($_.Exception.Message)) {
+                Write-WarnMsg $_.Exception.Message
+            }
+        }
+    }
+
     Write-Info 'Feishu configured'
     Write-Host ("  app id: {0}" -f (Mask-Value -Value $script:AppId -Prefix 8 -Suffix 4))
-    Show-FeishuPostConfigGuide
+    if (-not $browserPostConfigDone) {
+        Show-FeishuPostConfigGuide
+    }
     Test-FeishuChannel
 }
 
