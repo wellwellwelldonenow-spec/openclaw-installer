@@ -2,6 +2,8 @@
 param(
     [string]$Channel,
     [string]$ConfigPath,
+    [ValidateSet('auto', 'browser', 'manual')]
+    [string]$GuideMode = 'auto',
     [string]$Token,
     [string]$BotToken,
     [string]$AppToken,
@@ -19,6 +21,7 @@ $ErrorActionPreference = 'Stop'
 $script:InteractiveMenu = $false
 $script:Channel = $Channel
 $script:ConfigPath = $ConfigPath
+$script:GuideMode = $GuideMode.ToLowerInvariant()
 $script:Token = $Token
 $script:BotToken = $BotToken
 $script:AppToken = $AppToken
@@ -29,6 +32,7 @@ $script:AppSecret = $AppSecret
 $script:PluginId = $PluginId
 $script:NoRestart = [bool]$NoRestart
 $script:Test = [bool]$Test
+$script:OpenClawBrowserAvailable = $null
 
 function Write-Info([string]$Message) {
     Write-Host "[INFO] $Message" -ForegroundColor Cyan
@@ -49,7 +53,7 @@ Usage:
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel telegram -Token "YOUR_BOT_TOKEN" -UserId "YOUR_CHAT_ID" -Test
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel discord -Token "YOUR_BOT_TOKEN" -ChannelId "YOUR_CHANNEL_ID" -Test
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel slack -BotToken "YOUR_XOXB_TOKEN" -AppToken "YOUR_XAPP_TOKEN" -Test
-  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel feishu -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
+  powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel feishu -GuideMode browser -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel whatsapp
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel wechat -PluginId wechat
   powershell -ExecutionPolicy Bypass -File .\channel_setup.ps1 -Channel imessage
@@ -59,6 +63,7 @@ Supported channels:
 
 Options:
   -ConfigPath "PATH_TO_CONFIG"   Override OpenClaw config path
+  -GuideMode "auto|browser|manual"   Feishu guide mode; browser uses openclaw browser
   -NoRestart           Skip gateway restart
   -Test                Run a basic credential test when supported
 '@ | Write-Host
@@ -91,6 +96,14 @@ function Get-ZhText {
         'feishu_ws_ready' { return (New-UnicodeText @(0x5DF2,0x4E3A,0x20,0x4F,0x70,0x65,0x6E,0x43,0x6C,0x61,0x77,0x20,0x914D,0x7F6E,0x20,0x46,0x65,0x69,0x73,0x68,0x75,0x20,0x57,0x65,0x62,0x53,0x6F,0x63,0x6B,0x65,0x74,0x20,0x8FDE,0x63A5,0x6A21,0x5F0F,0x3002)) }
         'feishu_ws_step' { return (New-UnicodeText @(0x8BF7,0x5728,0x20,0x4E8B,0x4EF6,0x4E0E,0x56DE,0x8C03,0x20,0x2D,0x3E,0x20,0x8BA2,0x9605,0x65B9,0x5F0F,0x20,0x91CC,0x9009,0x62E9,0x20,0x957F,0x8FDE,0x63A5,0x3002)) }
         'feishu_event_step' { return (New-UnicodeText @(0x5E76,0x6DFB,0x52A0,0x4E8B,0x4EF6,0xFF1A,0x63A5,0x6536,0x6D88,0x606F,0x3002)) }
+        'guide_mode_title' { return (New-UnicodeText @(0x98DE,0x4E66,0x63A5,0x5165,0x65B9,0x5F0F)) }
+        'guide_mode_prompt' { return (New-UnicodeText @(0x8BF7,0x9009,0x62E9,0x98DE,0x4E66,0x63A5,0x5165,0x65B9,0x5F0F)) }
+        'guide_mode_browser' { return (New-UnicodeText @(0x81EA,0x52A8,0x5316,0x6D4F,0x89C8,0x5668,0x8F85,0x52A9,0xFF08,0x4F7F,0x7528,0x20,0x4F,0x70,0x65,0x6E,0x43,0x6C,0x61,0x77,0x20,0x62,0x72,0x6F,0x77,0x73,0x65,0x72,0xFF09)) }
+        'guide_mode_manual' { return (New-UnicodeText @(0x624B,0x52A8,0x6309,0x63D0,0x793A,0x64CD,0x4F5C)) }
+        'guide_mode_invalid' { return (New-UnicodeText @(0x65E0,0x6548,0x9009,0x62E9,0xFF0C,0x8BF7,0x91CD,0x65B0,0x8F93,0x5165,0x3002)) }
+        'feishu_portal_browser_opened' { return (New-UnicodeText @(0x5DF2,0x4F7F,0x7528,0x20,0x4F,0x70,0x65,0x6E,0x43,0x6C,0x61,0x77,0x20,0x6D4F,0x89C8,0x5668,0x6253,0x5F00,0x98DE,0x4E66,0x5F00,0x53D1,0x8005,0x540E,0x53F0,0x3002)) }
+        'feishu_browser_login_tip' { return (New-UnicodeText @(0x5982,0x672A,0x767B,0x5F55,0xFF0C,0x8BF7,0x5148,0x5728,0x20,0x4F,0x70,0x65,0x6E,0x43,0x6C,0x61,0x77,0x20,0x6D4F,0x89C8,0x5668,0x5B8C,0x6210,0x767B,0x5F55,0x3001,0x4F01,0x4E1A,0x5207,0x6362,0x548C,0x5E94,0x7528,0x521B,0x5EFA,0x3002)) }
+        'browser_mode_unavailable' { return (New-UnicodeText @(0x5F53,0x524D,0x672A,0x68C0,0x6D4B,0x5230,0x53EF,0x7528,0x7684,0x20,0x4F,0x70,0x65,0x6E,0x43,0x6C,0x61,0x77,0x20,0x62,0x72,0x6F,0x77,0x73,0x65,0x72,0xFF0C,0x5DF2,0x56DE,0x9000,0x4E3A,0x624B,0x52A8,0x63D0,0x793A,0x6A21,0x5F0F,0x3002)) }
         default { return $Key }
     }
 }
@@ -126,14 +139,28 @@ function Read-YesNo {
 }
 
 function Open-ExternalUrl {
-    param([Parameter(Mandatory = $true)][string]$Url)
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [switch]$UseBrowserAutomation
+    )
+
+    if ($UseBrowserAutomation -and (Test-OpenClawBrowserAvailable)) {
+        try {
+            Invoke-OpenClawBrowser start | Out-Null
+            Invoke-OpenClawBrowser open $Url | Out-Null
+            return [pscustomobject]@{ Success = $true; Method = 'browser' }
+        }
+        catch {
+            Write-WarnMsg "openclaw browser open failed; falling back to system browser."
+        }
+    }
 
     try {
         Start-Process $Url | Out-Null
-        return $true
+        return [pscustomobject]@{ Success = $true; Method = 'system' }
     }
     catch {
-        return $false
+        return [pscustomobject]@{ Success = $false; Method = 'none' }
     }
 }
 
@@ -145,14 +172,86 @@ function Wait-ForEnter {
     }
 }
 
+function Invoke-OpenClawBrowser {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Arguments
+    )
+
+    $allArgs = @('browser') + $Arguments
+    return Invoke-OpenClaw @allArgs
+}
+
+function Test-OpenClawBrowserAvailable {
+    if ($null -ne $script:OpenClawBrowserAvailable) {
+        return [bool]$script:OpenClawBrowserAvailable
+    }
+
+    try {
+        Invoke-OpenClawBrowser '--help' | Out-Null
+        $script:OpenClawBrowserAvailable = $true
+    }
+    catch {
+        $script:OpenClawBrowserAvailable = $false
+    }
+
+    return [bool]$script:OpenClawBrowserAvailable
+}
+
+function Select-FeishuGuideMode {
+    if ($script:GuideMode -in @('browser', 'manual')) {
+        if ($script:GuideMode -eq 'browser' -and -not (Test-OpenClawBrowserAvailable)) {
+            Write-WarnMsg (Get-ZhText 'browser_mode_unavailable')
+            $script:GuideMode = 'manual'
+        }
+
+        return $script:GuideMode
+    }
+
+    if (-not (Test-InteractiveConsole)) {
+        if (Test-OpenClawBrowserAvailable) {
+            return 'browser'
+        }
+
+        return 'manual'
+    }
+
+    if (-not (Test-OpenClawBrowserAvailable)) {
+        $script:GuideMode = 'manual'
+        return 'manual'
+    }
+
+    while ($true) {
+        Write-Host ''
+        Write-Host (Get-ZhText 'guide_mode_title') -ForegroundColor Cyan
+        Write-Host ("  1. " + (Get-ZhText 'guide_mode_browser'))
+        Write-Host ("  2. " + (Get-ZhText 'guide_mode_manual'))
+
+        $choice = (Read-Host -Prompt (Get-ZhText 'guide_mode_prompt')).Trim().ToLowerInvariant()
+        switch ($choice) {
+            '1' { $script:GuideMode = 'browser'; return 'browser' }
+            '2' { $script:GuideMode = 'manual'; return 'manual' }
+            default { Write-WarnMsg (Get-ZhText 'guide_mode_invalid') }
+        }
+    }
+}
+
 function Show-FeishuSetupGuide {
     if (-not (Test-InteractiveConsole)) {
         return
     }
 
+    $guideMode = Select-FeishuGuideMode
     $portalUrl = 'https://open.feishu.cn/'
-    if (Open-ExternalUrl -Url $portalUrl) {
-        Write-Info (Get-ZhText 'feishu_portal_opened')
+    $openResult = Open-ExternalUrl -Url $portalUrl -UseBrowserAutomation:($guideMode -eq 'browser')
+    if ($openResult.Success) {
+        if ($openResult.Method -eq 'browser') {
+            Write-Info (Get-ZhText 'feishu_portal_browser_opened')
+            Write-Host ("  0. " + (Get-ZhText 'feishu_browser_login_tip'))
+        }
+        else {
+            Write-Info (Get-ZhText 'feishu_portal_opened')
+        }
     }
     else {
         Write-WarnMsg ((Get-ZhText 'feishu_portal_manual') + " $portalUrl")

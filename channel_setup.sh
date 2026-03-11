@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 CHANNEL=""
 CONFIG_PATH=""
+GUIDE_MODE="auto"
 TOKEN=""
 BOT_TOKEN=""
 APP_TOKEN=""
@@ -47,6 +48,7 @@ Supported channels:
 
 General options:
   --config-path "PATH_TO_CONFIG"   Override OpenClaw config path
+  --guide-mode <mode>    Feishu guide mode: auto, browser, manual
   --restart              Restart gateway after changes (default)
   --no-restart           Do not restart gateway
   --test                 Run a basic channel credential test when supported
@@ -67,7 +69,7 @@ Examples:
   bash channel_setup.sh telegram --token "YOUR_BOT_TOKEN" --user-id "YOUR_CHAT_ID" --test
   bash channel_setup.sh discord --token "YOUR_BOT_TOKEN" --channel-id "YOUR_CHANNEL_ID" --test
   bash channel_setup.sh slack --bot-token "YOUR_XOXB_TOKEN" --app-token "YOUR_XAPP_TOKEN" --test
-  bash channel_setup.sh feishu --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
+  bash channel_setup.sh feishu --guide-mode browser --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
   bash channel_setup.sh whatsapp --restart
   bash channel_setup.sh wechat --plugin-id wechat
   bash channel_setup.sh imessage
@@ -104,19 +106,38 @@ prompt_yes_no() {
 
 open_external_url() {
   local url="$1"
+  local use_browser_automation="${2:-0}"
+
+  if [ "$use_browser_automation" -eq 1 ] && test_openclaw_browser_available; then
+    if openclaw browser start >/dev/null 2>&1 && openclaw browser open "$url" >/dev/null 2>&1; then
+      printf 'browser\n'
+      return 0
+    fi
+    log_warn "openclaw browser open failed; falling back to system browser." >&2
+  fi
 
   if command -v open >/dev/null 2>&1; then
-    open "$url" >/dev/null 2>&1 && return 0
+    open "$url" >/dev/null 2>&1 && {
+      printf 'system\n'
+      return 0
+    }
   fi
 
   if command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$url" >/dev/null 2>&1 && return 0
+    xdg-open "$url" >/dev/null 2>&1 && {
+      printf 'system\n'
+      return 0
+    }
   fi
 
   if command -v cmd.exe >/dev/null 2>&1; then
-    cmd.exe /c start "" "$url" >/dev/null 2>&1 && return 0
+    cmd.exe /c start "" "$url" >/dev/null 2>&1 && {
+      printf 'system\n'
+      return 0
+    }
   fi
 
+  printf 'none\n'
   return 1
 }
 
@@ -128,15 +149,98 @@ wait_for_enter() {
   read -r _ || true
 }
 
+test_openclaw_browser_available() {
+  if openclaw browser --help >/dev/null 2>&1; then
+    return 0
+  fi
+
+  return 1
+}
+
+select_feishu_guide_mode() {
+  local choice=""
+
+  case "$GUIDE_MODE" in
+    browser)
+      if test_openclaw_browser_available; then
+        printf 'browser\n'
+      else
+        log_warn $'\u5f53\u524d\u672a\u68c0\u6d4b\u5230\u53ef\u7528\u7684 OpenClaw browser\uff0c\u5df2\u56de\u9000\u4e3a\u624b\u52a8\u63d0\u793a\u6a21\u5f0f\u3002' >&2
+        GUIDE_MODE="manual"
+        printf 'manual\n'
+      fi
+      return 0
+      ;;
+    manual)
+      printf 'manual\n'
+      return 0
+      ;;
+    auto)
+      ;;
+    *)
+      fail "Unsupported guide mode: $GUIDE_MODE"
+      ;;
+  esac
+
+  if ! is_interactive_terminal; then
+    if test_openclaw_browser_available; then
+      printf 'browser\n'
+    else
+      printf 'manual\n'
+    fi
+    return 0
+  fi
+
+  if ! test_openclaw_browser_available; then
+    GUIDE_MODE="manual"
+    printf 'manual\n'
+    return 0
+  fi
+
+  while true; do
+    printf '\n' >&2
+    printf '%s\n' $'\u98de\u4e66\u63a5\u5165\u65b9\u5f0f' >&2
+    printf '%s\n' $'  1. \u81ea\u52a8\u5316\u6d4f\u89c8\u5668\u8f85\u52a9\uff08\u4f7f\u7528 OpenClaw browser\uff09' >&2
+    printf '%s\n' $'  2. \u624b\u52a8\u6309\u63d0\u793a\u64cd\u4f5c' >&2
+    printf '%s' $'\u8bf7\u9009\u62e9\u98de\u4e66\u63a5\u5165\u65b9\u5f0f: ' >&2
+    read -r choice || true
+
+    case "${choice:-}" in
+      1)
+        GUIDE_MODE="browser"
+        printf 'browser\n'
+        return 0
+        ;;
+      2)
+        GUIDE_MODE="manual"
+        printf 'manual\n'
+        return 0
+        ;;
+      *)
+        log_warn $'\u65e0\u6548\u9009\u62e9\uff0c\u8bf7\u91cd\u65b0\u8f93\u5165\u3002' >&2
+        ;;
+    esac
+  done
+}
+
 show_feishu_setup_guide() {
   local portal_url="https://open.feishu.cn/"
+  local guide_mode=""
+  local open_method=""
 
   if ! is_interactive_terminal; then
     return 0
   fi
 
-  if open_external_url "$portal_url"; then
-    log_info $'\u5df2\u4e3a\u4f60\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
+  guide_mode="$(select_feishu_guide_mode)"
+
+  if open_method="$(open_external_url "$portal_url" "$([ "$guide_mode" = "browser" ] && printf '1' || printf '0')")"; then
+    if [ "$open_method" = "browser" ]; then
+      log_info $'\u5df2\u4f7f\u7528 OpenClaw \u6d4f\u89c8\u5668\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
+      printf '%s\n' $'  0. \u5982\u672a\u767b\u5f55\uff0c\u8bf7\u5148\u5728 OpenClaw \u6d4f\u89c8\u5668\u5b8c\u6210\u767b\u5f55\u3001\u4f01\u4e1a\u5207\u6362\u548c\u5e94\u7528\u521b\u5efa\u3002'
+    else
+      log_info $'\u5df2\u4e3a\u4f60\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
+    fi
   else
     log_warn "$(
       printf '%s %s' $'\u672a\u80fd\u81ea\u52a8\u6253\u5f00\u6d4f\u89c8\u5668\uff0c\u8bf7\u624b\u52a8\u8bbf\u95ee\uff1a' "$portal_url"
@@ -592,6 +696,10 @@ parse_args() {
         CONFIG_PATH="${2:-}"
         shift
         ;;
+      --guide-mode)
+        GUIDE_MODE="${2:-}"
+        shift
+        ;;
       --token)
         TOKEN="${2:-}"
         shift
@@ -643,6 +751,11 @@ parse_args() {
     esac
     shift
   done
+
+  case "$GUIDE_MODE" in
+    auto|browser|manual) ;;
+    *) fail "Unsupported guide mode: $GUIDE_MODE" ;;
+  esac
 
   [ -n "$CHANNEL" ] || fail "Channel is required."
 }

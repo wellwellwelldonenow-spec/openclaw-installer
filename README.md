@@ -113,7 +113,7 @@ Examples:
 ```bash
 bash /tmp/channel_setup.sh discord --token "YOUR_BOT_TOKEN" --channel-id "YOUR_CHANNEL_ID" --test
 bash /tmp/channel_setup.sh slack --bot-token "YOUR_XOXB_TOKEN" --app-token "YOUR_XAPP_TOKEN" --test
-bash /tmp/channel_setup.sh feishu --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
+bash /tmp/channel_setup.sh feishu --guide-mode browser --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
 bash /tmp/channel_setup.sh whatsapp
 ```
 
@@ -121,7 +121,7 @@ bash /tmp/channel_setup.sh whatsapp
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel discord -Token "YOUR_BOT_TOKEN" -ChannelId "YOUR_CHANNEL_ID" -Test
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel slack -BotToken "YOUR_XOXB_TOKEN" -AppToken "YOUR_XAPP_TOKEN" -Test
-powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel feishu -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel feishu -GuideMode browser -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel whatsapp
 ```
 
@@ -132,6 +132,7 @@ The channel setup scripts try to:
 - configure the channel with `openclaw` CLI
 - optionally restart the gateway and run a basic credential test
 - enter a Chinese interactive menu automatically when run without arguments
+- for Feishu, let the user choose `browser` mode or `manual` mode; `browser` mode prefers `openclaw browser`, `manual` mode keeps the prompt-only flow
 - for Feishu, open the developer console and guide app creation, bot capability, permissions, and long-connection event setup
 
 Use `openclaw channels list` and `openclaw gateway status --deep` after setup to verify the result.
