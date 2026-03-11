@@ -601,7 +601,7 @@ setup_slack() {
 }
 
 setup_feishu() {
-  if { [ -z "$APP_ID" ] || [ -z "$APP_SECRET" ]; } && is_interactive_terminal; then
+  if is_interactive_terminal && { [ -z "$APP_ID" ] || [ -z "$APP_SECRET" ] || [ "$GUIDE_MODE" != "auto" ]; }; then
     show_feishu_setup_guide
   fi
 

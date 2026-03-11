@@ -786,7 +786,11 @@ function Setup-Slack {
 }
 
 function Setup-Feishu {
-    if (([string]::IsNullOrWhiteSpace($script:AppId) -or [string]::IsNullOrWhiteSpace($script:AppSecret)) -and (Test-InteractiveConsole)) {
+    $shouldShowGuide = (Test-InteractiveConsole) -and (
+        ([string]::IsNullOrWhiteSpace($script:AppId) -or [string]::IsNullOrWhiteSpace($script:AppSecret)) -or
+        ($script:GuideMode -ne 'auto')
+    )
+    if ($shouldShowGuide) {
         Show-FeishuSetupGuide
     }
 
