@@ -102,6 +102,62 @@ prompt_yes_no() {
   esac
 }
 
+open_external_url() {
+  local url="$1"
+
+  if command -v open >/dev/null 2>&1; then
+    open "$url" >/dev/null 2>&1 && return 0
+  fi
+
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 && return 0
+  fi
+
+  if command -v cmd.exe >/dev/null 2>&1; then
+    cmd.exe /c start "" "$url" >/dev/null 2>&1 && return 0
+  fi
+
+  return 1
+}
+
+wait_for_enter() {
+  local prompt="$1"
+
+  [ -t 0 ] || return 0
+  printf '%s ' "$prompt" >&2
+  read -r _ || true
+}
+
+show_feishu_setup_guide() {
+  local portal_url="https://open.feishu.cn/"
+
+  if ! is_interactive_terminal; then
+    return 0
+  fi
+
+  if open_external_url "$portal_url"; then
+    log_info $'\u5df2\u4e3a\u4f60\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
+  else
+    log_warn "$(
+      printf '%s %s' $'\u672a\u80fd\u81ea\u52a8\u6253\u5f00\u6d4f\u89c8\u5668\uff0c\u8bf7\u624b\u52a8\u8bbf\u95ee\uff1a' "$portal_url"
+    )"
+  fi
+
+  printf '%s\n' $'  1. \u521b\u5efa\u4f01\u4e1a\u81ea\u5efa\u5e94\u7528\u3002'
+  printf '%s\n' $'  2. \u5728\u5e94\u7528\u51ed\u8bc1\u4e0e\u57fa\u7840\u4fe1\u606f\u9875\u590d\u5236 App ID \u548c App Secret\u3002'
+  printf '%s\n' $'  3. \u5f00\u542f\u5e94\u7528\u80fd\u529b\uff1a\u673a\u5668\u4eba\u3002'
+  printf '%s\n' $'  4. \u5f00\u901a\u6d88\u606f\u4e0e\u7fa4\u7ec4\u76f8\u5173\u6743\u9650\u3002'
+  wait_for_enter $'\u5b8c\u6210\u4ee5\u4e0a\u6b65\u9aa4\u540e\u6309\u56de\u8f66\u7ee7\u7eed\u3002'
+}
+
+show_feishu_post_config_guide() {
+  log_info $'\u5df2\u4e3a OpenClaw \u914d\u7f6e Feishu WebSocket \u8fde\u63a5\u6a21\u5f0f\u3002'
+  printf '%s\n' $'  1. \u786e\u8ba4\u5df2\u5f00\u542f\u5e94\u7528\u80fd\u529b\uff1a\u673a\u5668\u4eba\u3002'
+  printf '%s\n' $'  2. \u786e\u8ba4\u5df2\u5f00\u901a\u6d88\u606f\u4e0e\u7fa4\u7ec4\u76f8\u5173\u6743\u9650\u3002'
+  printf '%s\n' $'  3. \u8bf7\u5728 \u4e8b\u4ef6\u4e0e\u56de\u8c03 -> \u8ba2\u9605\u65b9\u5f0f \u91cc\u9009\u62e9 \u957f\u8fde\u63a5\u3002'
+  printf '%s\n' $'  4. \u5e76\u6dfb\u52a0\u4e8b\u4ef6\uff1a\u63a5\u6536\u6d88\u606f\u3002'
+}
+
 show_channel_menu() {
   local choice=""
 
@@ -441,6 +497,10 @@ setup_slack() {
 }
 
 setup_feishu() {
+  if { [ -z "$APP_ID" ] || [ -z "$APP_SECRET" ]; } && is_interactive_terminal; then
+    show_feishu_setup_guide
+  fi
+
   APP_ID="$(prompt_value "Feishu app id" "$APP_ID" 0)"
   APP_SECRET="$(prompt_value "Feishu app secret" "$APP_SECRET" 1)"
   require_value "--app-id" "$APP_ID"
@@ -466,6 +526,7 @@ setup_feishu() {
 
   log_info "Feishu configured"
   printf '  app id: %s\n' "$(mask_value "$APP_ID" 8 4)"
+  show_feishu_post_config_guide
   run_test_feishu
 }
 
