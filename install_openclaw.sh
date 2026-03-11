@@ -951,6 +951,12 @@ run_openclaw_with_service_env() {
     OPENCLAW_STATE_DIR="$state_dir" \
     NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache \
     OPENCLAW_NO_RESPAWN=1 \
+    HTTP_PROXY= \
+    HTTPS_PROXY= \
+    ALL_PROXY= \
+    http_proxy= \
+    https_proxy= \
+    all_proxy= \
     "$(openclaw_bin_path)" "$@"
 }
 
@@ -1016,6 +1022,12 @@ OPENCLAW_CONFIG_PATH=$config_path
 OPENCLAW_STATE_DIR=$state_dir
 NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache
 OPENCLAW_NO_RESPAWN=1
+HTTP_PROXY=
+HTTPS_PROXY=
+ALL_PROXY=
+http_proxy=
+https_proxy=
+all_proxy=
 EOF
 
   log "已写入服务环境文件：$env_file"

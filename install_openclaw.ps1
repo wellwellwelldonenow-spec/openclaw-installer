@@ -1462,10 +1462,51 @@ function Write-ServiceEnv {
         "OPENCLAW_CONFIG_PATH=$ConfigPath",
         "OPENCLAW_STATE_DIR=$stateDir",
         'NODE_COMPILE_CACHE=%TEMP%\openclaw-compile-cache',
-        'OPENCLAW_NO_RESPAWN=1'
+        'OPENCLAW_NO_RESPAWN=1',
+        'HTTP_PROXY=',
+        'HTTPS_PROXY=',
+        'ALL_PROXY=',
+        'http_proxy=',
+        'https_proxy=',
+        'all_proxy='
     ) | Set-Content -Path $envFile -Encoding UTF8
 
     Write-Info "Wrote service environment file: $envFile"
+}
+
+function Rewrite-WindowsGatewayCommand {
+    $gatewayCmd = Join-Path $HOME '.openclaw\gateway.cmd'
+    if (-not (Test-Path $gatewayCmd)) {
+        return
+    }
+
+    $content = Get-Content -Path $gatewayCmd -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($content)) {
+        return
+    }
+
+    $clears = @(
+        'set "HTTP_PROXY="',
+        'set "HTTPS_PROXY="',
+        'set "ALL_PROXY="',
+        'set "http_proxy="',
+        'set "https_proxy="',
+        'set "all_proxy="'
+    )
+
+    $updated = $content
+    foreach ($line in $clears) {
+        if ($updated -match [Regex]::Escape($line)) {
+            continue
+        }
+
+        $updated = $updated -replace '(?m)^(set "TMPDIR=.*"\r?\n)', "`$1$line`r`n"
+    }
+
+    if ($updated -ne $content) {
+        Set-Content -Path $gatewayCmd -Value $updated -Encoding ASCII
+        Write-Info "Sanitized gateway launcher proxy env: $gatewayCmd"
+    }
 }
 
 function Invoke-OpenClawWithServiceEnv {
@@ -1484,6 +1525,12 @@ function Invoke-OpenClawWithServiceEnv {
     $previousStateDir = $env:OPENCLAW_STATE_DIR
     $previousCompileCache = $env:NODE_COMPILE_CACHE
     $previousNoRespawn = $env:OPENCLAW_NO_RESPAWN
+    $previousHttpProxy = $env:HTTP_PROXY
+    $previousHttpsProxy = $env:HTTPS_PROXY
+    $previousAllProxy = $env:ALL_PROXY
+    $previousLowerHttpProxy = $env:http_proxy
+    $previousLowerHttpsProxy = $env:https_proxy
+    $previousLowerAllProxy = $env:all_proxy
 
     try {
         $env:Path = Get-ServicePath
@@ -1493,6 +1540,12 @@ function Invoke-OpenClawWithServiceEnv {
         $env:OPENCLAW_STATE_DIR = $StateDir
         $env:NODE_COMPILE_CACHE = Join-Path $env:TEMP 'openclaw-compile-cache'
         $env:OPENCLAW_NO_RESPAWN = '1'
+        $env:HTTP_PROXY = ''
+        $env:HTTPS_PROXY = ''
+        $env:ALL_PROXY = ''
+        $env:http_proxy = ''
+        $env:https_proxy = ''
+        $env:all_proxy = ''
         $result = Invoke-NativeCommandSafe $openclawPath @Arguments
         $output = $result.Output
         $exitCode = $result.ExitCode
@@ -1513,6 +1566,12 @@ function Invoke-OpenClawWithServiceEnv {
         $env:OPENCLAW_STATE_DIR = $previousStateDir
         $env:NODE_COMPILE_CACHE = $previousCompileCache
         $env:OPENCLAW_NO_RESPAWN = $previousNoRespawn
+        $env:HTTP_PROXY = $previousHttpProxy
+        $env:HTTPS_PROXY = $previousHttpsProxy
+        $env:ALL_PROXY = $previousAllProxy
+        $env:http_proxy = $previousLowerHttpProxy
+        $env:https_proxy = $previousLowerHttpsProxy
+        $env:all_proxy = $previousLowerAllProxy
     }
 }
 
@@ -1717,6 +1776,12 @@ function Start-GatewayWithoutService {
     $previousStateDir = $env:OPENCLAW_STATE_DIR
     $previousCompileCache = $env:NODE_COMPILE_CACHE
     $previousNoRespawn = $env:OPENCLAW_NO_RESPAWN
+    $previousHttpProxy = $env:HTTP_PROXY
+    $previousHttpsProxy = $env:HTTPS_PROXY
+    $previousAllProxy = $env:ALL_PROXY
+    $previousLowerHttpProxy = $env:http_proxy
+    $previousLowerHttpsProxy = $env:https_proxy
+    $previousLowerAllProxy = $env:all_proxy
 
     try {
         $env:Path = Get-ServicePath
@@ -1726,6 +1791,12 @@ function Start-GatewayWithoutService {
         $env:OPENCLAW_STATE_DIR = $StateDir
         $env:NODE_COMPILE_CACHE = Join-Path $env:TEMP 'openclaw-compile-cache'
         $env:OPENCLAW_NO_RESPAWN = '1'
+        $env:HTTP_PROXY = ''
+        $env:HTTPS_PROXY = ''
+        $env:ALL_PROXY = ''
+        $env:http_proxy = ''
+        $env:https_proxy = ''
+        $env:all_proxy = ''
 
         Write-WarnMsg 'Starting gateway in no-service user mode'
         $commandLine = "`"$openclawPath`" gateway run --port $GatewayPort --bind loopback 1>> `"$stdoutLog`" 2>> `"$stderrLog`""
@@ -1739,6 +1810,12 @@ function Start-GatewayWithoutService {
         $env:OPENCLAW_STATE_DIR = $previousStateDir
         $env:NODE_COMPILE_CACHE = $previousCompileCache
         $env:OPENCLAW_NO_RESPAWN = $previousNoRespawn
+        $env:HTTP_PROXY = $previousHttpProxy
+        $env:HTTPS_PROXY = $previousHttpsProxy
+        $env:ALL_PROXY = $previousAllProxy
+        $env:http_proxy = $previousLowerHttpProxy
+        $env:https_proxy = $previousLowerHttpsProxy
+        $env:all_proxy = $previousLowerAllProxy
     }
 
     if (-not (Test-GatewayHealth)) {
@@ -1806,6 +1883,7 @@ function Repair-GatewayService {
     } else {
         try {
             Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
+            Rewrite-WindowsGatewayCommand
         } catch {
             if (Test-ServiceInstallAccessDenied $_.Exception.Message) {
                 Start-GatewayWithoutService -ConfigPath $configPath -StateDir $stateDir
@@ -1831,6 +1909,7 @@ function Install-AndStartGateway {
     if (-not $script:SkipServiceInstall) {
         try {
             Invoke-OpenClawWithServiceEnv -ConfigPath $configPath -StateDir $stateDir gateway install --runtime node --port $GatewayPort --force
+            Rewrite-WindowsGatewayCommand
         } catch {
             if (Test-ServiceInstallAccessDenied $_.Exception.Message) {
                 $serviceInstallOk = $false
