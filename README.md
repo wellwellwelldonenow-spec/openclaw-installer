@@ -132,7 +132,7 @@ The channel setup scripts try to:
 - configure the channel with `openclaw` CLI
 - optionally restart the gateway and run a basic credential test
 - enter a Chinese interactive menu automatically when run without arguments
-- for Feishu, let the user choose `browser` mode or `manual` mode; `browser` mode prefers `openclaw browser`, `manual` mode keeps the prompt-only flow
+- for Feishu, let the user choose `browser` mode or `manual` mode; `browser` mode prefers `openclaw browser`, prompts the user to scan login, then auto-continues after login is detected
 - for Feishu, open the developer console and guide app creation, bot capability, permissions, and long-connection event setup
 
 Use `openclaw channels list` and `openclaw gateway status --deep` after setup to verify the result.

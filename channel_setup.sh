@@ -157,6 +157,37 @@ test_openclaw_browser_available() {
   return 1
 }
 
+test_feishu_browser_logged_in() {
+  local tabs_output=""
+
+  tabs_output="$(openclaw browser tabs 2>/dev/null || true)"
+  [ -n "$tabs_output" ] || return 1
+
+  printf '%s\n' "$tabs_output" | grep -Eq 'https://open\.feishu\.cn/app(\?[^[:space:]]*)?$'
+}
+
+wait_for_feishu_browser_login() {
+  local attempt=0
+
+  is_interactive_terminal || return 0
+
+  log_info $'\u8bf7\u5728 OpenClaw \u6d4f\u89c8\u5668\u4e2d\u626b\u7801\u767b\u5f55\u98de\u4e66\uff0c\u767b\u5f55\u5b8c\u6210\u540e\u811a\u672c\u4f1a\u81ea\u52a8\u7ee7\u7eed\u3002'
+  log_info $'\u6b63\u5728\u7b49\u5f85\u98de\u4e66\u767b\u5f55\u5b8c\u6210...'
+
+  while [ "$attempt" -lt 120 ]; do
+    if test_feishu_browser_logged_in; then
+      log_info $'\u68c0\u6d4b\u5230\u98de\u4e66\u767b\u5f55\u5b8c\u6210\uff0c\u7ee7\u7eed\u6267\u884c\u914d\u7f6e\u3002'
+      return 0
+    fi
+
+    sleep 5
+    attempt=$((attempt + 1))
+  done
+
+  log_warn $'\u7b49\u5f85\u98de\u4e66\u767b\u5f55\u8d85\u65f6\uff0c\u8bf7\u786e\u8ba4\u5df2\u767b\u5f55\u540e\u6309\u56de\u8f66\u7ee7\u7eed\uff0c\u6216\u6309 Ctrl+C \u53d6\u6d88\u3002'
+  wait_for_enter $'\u7b49\u5f85\u98de\u4e66\u767b\u5f55\u8d85\u65f6\uff0c\u8bf7\u786e\u8ba4\u5df2\u767b\u5f55\u540e\u6309\u56de\u8f66\u7ee7\u7eed\uff0c\u6216\u6309 Ctrl+C \u53d6\u6d88\u3002'
+}
+
 select_feishu_guide_mode() {
   local choice=""
 
@@ -224,7 +255,7 @@ select_feishu_guide_mode() {
 }
 
 show_feishu_setup_guide() {
-  local portal_url="https://open.feishu.cn/"
+  local portal_url="https://open.feishu.cn/app?lang=zh-CN"
   local guide_mode=""
   local open_method=""
 
@@ -238,6 +269,7 @@ show_feishu_setup_guide() {
     if [ "$open_method" = "browser" ]; then
       log_info $'\u5df2\u4f7f\u7528 OpenClaw \u6d4f\u89c8\u5668\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
       printf '%s\n' $'  0. \u5982\u672a\u767b\u5f55\uff0c\u8bf7\u5148\u5728 OpenClaw \u6d4f\u89c8\u5668\u5b8c\u6210\u767b\u5f55\u3001\u4f01\u4e1a\u5207\u6362\u548c\u5e94\u7528\u521b\u5efa\u3002'
+      wait_for_feishu_browser_login
     else
       log_info $'\u5df2\u4e3a\u4f60\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
     fi
