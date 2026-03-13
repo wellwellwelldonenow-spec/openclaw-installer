@@ -19,6 +19,7 @@
 - 自动设置默认模型为 `megabyai/<你的模型ID>`
 - 自动写入 `OPENCLAW_GATEWAY_PORT`、`OPENCLAW_CONFIG_PATH`、`OPENCLAW_STATE_DIR` 到服务环境
 - 默认启用 `browser` tool，并默认使用 `openai-responses`
+- Linux 在启用 `browser` tool 时会自动补装 Chrome/Chromium
 - 如需切回 `openai-completions`，可通过 `OPENCLAW_PROVIDER_API` 手动覆盖
 - 上游接口自动校验，优先使用系统请求栈，失败时自动回退到 `Node.js` TLS 栈
 - 网关健康检查失败时自动执行 `openclaw doctor --fix` 并重装服务后重试
@@ -40,6 +41,12 @@
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 | iex
+```
+
+如果用户访问 GitHub 需要显式套代理，可改用：
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser; $env:OPENCLAW_PROXY_URL='http://YOUR_PROXY_HOST:PORT'; $env:HTTP_PROXY=$env:OPENCLAW_PROXY_URL; $env:HTTPS_PROXY=$env:OPENCLAW_PROXY_URL; $env:ALL_PROXY=$env:OPENCLAW_PROXY_URL; $script = Join-Path $env:TEMP 'install_openclaw.ps1'; iwr -useb https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.ps1 -OutFile $script; powershell -NoProfile -ExecutionPolicy Bypass -File $script -ProxyUrl $env:OPENCLAW_PROXY_URL
 ```
 
 适用于：
@@ -78,6 +85,53 @@ npm install -g openclaw@latest
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh
 ```
+
+如果用户访问 GitHub 需要显式套代理，可改用：
+
+```bash
+OPENCLAW_PROXY_URL='http://YOUR_PROXY_HOST:PORT' HTTP_PROXY='http://YOUR_PROXY_HOST:PORT' HTTPS_PROXY='http://YOUR_PROXY_HOST:PORT' ALL_PROXY='http://YOUR_PROXY_HOST:PORT' sh -c 'curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh --proxy "$OPENCLAW_PROXY_URL"'
+```
+
+## macOS / Windows 控制台应用
+
+仓库内置了一个本地控制台界面，适合 macOS / Windows：
+
+- 安装前输入 API Key、模型 ID，并先做上游可用性检测
+- 安装时可直接套本地代理，或读取 `vless://` 节点并临时拉起代理内核
+- 安装完成后代理自动关闭
+- 应用内临时代理默认启用白名单规则，只允许 GitHub 和安装链路必需域名
+- 提供 `openclaw dashboard`、`gateway status --deep`、`doctor --fix`、`channels list` 等常用按钮
+- 提供卸载 OpenClaw 按钮，直接调用仓库现有卸载脚本
+- 提供飞书全自动配置按钮，也可配置 Telegram / Discord / Slack 等频道
+
+启动方式：
+
+```bash
+npm install
+npm run control-app
+```
+
+说明：
+
+- 控制台应用默认监听 `http://127.0.0.1:3218/`
+- 如需让应用直接接管 `vless://`，请把 `sing-box` 或 `xray` 二进制放到 `app/bin/` 下
+- Linux 继续推荐直接跑 `install_openclaw.sh`；脚本现在会在需要时自动安装 Chrome/Chromium
+
+桌面应用方式：
+
+```bash
+npm install
+npm run desktop
+```
+
+打包当前系统桌面应用：
+
+```bash
+npm install
+npm run dist
+```
+
+当前本地已验证可产出 macOS 包：`dist/OpenClaw Control-0.1.0-arm64-mac.zip`
 
 ## One-Click Channel Setup
 

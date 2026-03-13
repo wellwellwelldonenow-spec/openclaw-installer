@@ -6,6 +6,7 @@ OPENCLAW_PORT_INPUT="${OPENCLAW_PORT:-}"
 OPENCLAW_PORT="${OPENCLAW_PORT:-18789}"
 ACTION="install"
 API_KEY_ARG=""
+PROXY_URL="${OPENCLAW_PROXY_URL:-}"
 PROVIDER_ID="megabyai"
 BASE_URL="https://newapi.megabyai.cc/v1"
 MODEL_ID_DEFAULT="gpt-5.3-codex"
@@ -52,9 +53,11 @@ show_usage() {
   cat <<'EOF'
 用法:
   bash install_openclaw.sh [NEWAPI_API_KEY]
+  bash install_openclaw.sh --proxy http://127.0.0.1:7890
   bash install_openclaw.sh --uninstall
 
 选项:
+  --proxy URL    为安装过程显式设置 HTTP(S)/ALL 代理
   --uninstall   删除 OpenClaw、网关服务、状态目录，以及脚本安装的 Node.js 环境
   -h, --help    显示帮助
 EOF
@@ -63,6 +66,11 @@ EOF
 parse_cli_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      --proxy)
+        shift
+        [ "$#" -gt 0 ] || fail "--proxy 需要提供 URL"
+        PROXY_URL="$1"
+        ;;
       --uninstall|uninstall)
         ACTION="uninstall"
         ;;
@@ -82,6 +90,15 @@ parse_cli_args() {
     esac
     shift
   done
+}
+
+initialize_proxy() {
+  if [ -n "$PROXY_URL" ]; then
+    export_proxy_url "$PROXY_URL"
+    return 0
+  fi
+
+  auto_detect_local_proxy
 }
 
 proxy_already_configured() {
@@ -610,6 +627,102 @@ install_node_linux() {
   fi
 
   fail "未识别的 Linux 包管理器，无法自动安装 Node.js 22"
+}
+
+detect_linux_browser_command() {
+  local candidate
+  for candidate in google-chrome-stable google-chrome chrome chromium chromium-browser; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+install_google_chrome_deb() {
+  local deb_path="/tmp/google-chrome-stable_current_amd64.deb"
+
+  [ "$ARCH" = "x64" ] || return 1
+  curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o "$deb_path" || return 1
+
+  if run_privileged apt-get install -y "$deb_path"; then
+    return 0
+  fi
+
+  if command -v dpkg >/dev/null 2>&1; then
+    run_privileged dpkg -i "$deb_path" >/dev/null 2>&1 || true
+    run_privileged apt-get -f install -y >/dev/null 2>&1 || true
+  fi
+
+  detect_linux_browser_command >/dev/null 2>&1
+}
+
+install_google_chrome_rpm() {
+  local rpm_path="/tmp/google-chrome-stable_current_x86_64.rpm"
+  local manager="$1"
+
+  [ "$ARCH" = "x64" ] || return 1
+  curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_x86_64.rpm -o "$rpm_path" || return 1
+
+  case "$manager" in
+    dnf)
+      run_privileged dnf install -y "$rpm_path"
+      ;;
+    yum)
+      run_privileged yum localinstall -y "$rpm_path"
+      ;;
+    zypper)
+      run_privileged zypper --non-interactive install "$rpm_path"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ensure_linux_chrome() {
+  local browser_cmd=""
+
+  [ "$OS" = "linux" ] || return 0
+  [ "$ENABLE_BROWSER_TOOL" = "1" ] || return 0
+
+  browser_cmd="$(detect_linux_browser_command 2>/dev/null || true)"
+  if [ -n "$browser_cmd" ]; then
+    log "已检测到浏览器：$browser_cmd"
+    return 0
+  fi
+
+  warn "Linux 未检测到 Chrome/Chromium，开始自动安装浏览器"
+
+  if command -v apt-get >/dev/null 2>&1; then
+    run_privileged apt-get update
+    install_google_chrome_deb || \
+      run_privileged apt-get install -y chromium || \
+      run_privileged apt-get install -y chromium-browser || \
+      fail "未能在当前 Debian/Ubuntu 系统上自动安装 Chrome/Chromium"
+  elif command -v dnf >/dev/null 2>&1; then
+    install_google_chrome_rpm dnf || \
+      run_privileged dnf install -y chromium || \
+      fail "未能在当前 Fedora/RHEL 系统上自动安装 Chrome/Chromium"
+  elif command -v yum >/dev/null 2>&1; then
+    install_google_chrome_rpm yum || \
+      run_privileged yum install -y chromium || \
+      fail "未能在当前 Yum 系统上自动安装 Chrome/Chromium"
+  elif command -v pacman >/dev/null 2>&1; then
+    run_privileged pacman -Sy --noconfirm --needed chromium || \
+      fail "未能在当前 Arch 系统上自动安装 Chromium"
+  elif command -v zypper >/dev/null 2>&1; then
+    install_google_chrome_rpm zypper || \
+      run_privileged zypper --non-interactive install chromium || \
+      fail "未能在当前 openSUSE 系统上自动安装 Chrome/Chromium"
+  else
+    fail "未识别的 Linux 包管理器，无法自动安装 Chrome/Chromium"
+  fi
+
+  browser_cmd="$(detect_linux_browser_command 2>/dev/null || true)"
+  [ -n "$browser_cmd" ] || fail "浏览器安装命令未出现在 PATH 中，请手动安装 Chrome/Chromium 后重试"
+  log "浏览器已就绪：$browser_cmd"
 }
 
 prefer_existing_linux_system_node() {
@@ -1893,10 +2006,11 @@ main() {
 
   detect_platform
   need_cmd curl
-  auto_detect_local_proxy
+  initialize_proxy
   prompt_api_key "$API_KEY_ARG"
   prompt_model
   ensure_node
+  ensure_linux_chrome
   choose_gateway_port
   install_openclaw
   bootstrap_openclaw

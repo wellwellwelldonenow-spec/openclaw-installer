@@ -1,0 +1,47 @@
+{
+  "name": "openclaw-installer-control",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local control UI for OpenClaw installer on macOS and Windows.",
+  "author": "megabyai",
+  "type": "module",
+  "main": "app/electron-main.mjs",
+  "scripts": {
+    "control-app": "node app/server.mjs",
+    "desktop": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "build": {
+    "appId": "cc.megabyai.openclaw.control",
+    "productName": "OpenClaw Control",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "app/**/*",
+      "install_openclaw.sh",
+      "install_openclaw.ps1",
+      "channel_setup.sh",
+      "channel_setup.ps1",
+      "feishu_browser_automation.js",
+      "README.md",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^35.0.1",
+    "electron-builder": "^26.0.12"
+  }
+}

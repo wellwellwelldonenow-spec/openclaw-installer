@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OpenClaw Control</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">OpenClaw Installer Control</p>
+          <h1>macOS / Windows 安装控制台</h1>
+          <p class="subtitle">前置做上游可用性检测，安装阶段临时启用代理，结束后自动回收。</p>
+        </div>
+        <div class="status-pile" id="status-pile"></div>
+      </section>
+
+      <section class="grid two-up">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>安装</h2>
+            <button id="refresh-status" class="ghost">刷新环境</button>
+          </div>
+          <label>
+            <span>API Key</span>
+            <input id="api-key" type="password" placeholder="sk-...">
+          </label>
+          <label>
+            <span>模型 ID</span>
+            <input id="model-id" type="text" value="gpt-5.3-codex">
+          </label>
+          <label>
+            <span>上游 Base URL</span>
+            <input id="base-url" type="text" value="https://newapi.megabyai.cc/v1">
+          </label>
+          <fieldset class="mode-box">
+            <legend>代理方式</legend>
+            <label class="radio-row"><input type="radio" name="proxy-mode" value="none" checked> <span>不走代理</span></label>
+            <label class="radio-row"><input type="radio" name="proxy-mode" value="local"> <span>使用已有本地代理</span></label>
+            <label class="radio-row"><input type="radio" name="proxy-mode" value="managed"> <span>应用内临时拉起 VLESS 代理</span></label>
+          </fieldset>
+          <label id="local-proxy-wrap" class="conditional hidden">
+            <span>本地代理 URL</span>
+            <input id="local-proxy-url" type="text" value="http://127.0.0.1:7890">
+          </label>
+          <label id="vless-wrap" class="conditional hidden">
+            <span>VLESS URL</span>
+            <textarea id="vless-url" rows="4" placeholder="vless://uuid@host:port?..."></textarea>
+          </label>
+          <div class="actions">
+            <button id="check-upstream">检测上游</button>
+            <button id="start-install" class="primary">开始安装</button>
+          </div>
+          <p class="hint">安装过程调用现有安装脚本，默认直接写配置并跳过 OpenClaw onboard 新手交互。只有“应用内临时拉起 VLESS 代理”模式会启用域名白名单，默认只允许 GitHub 和安装链路必需域名。</p>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>常用命令</h2>
+            <button id="open-dashboard" class="ghost">打开 Dashboard</button>
+          </div>
+          <div class="command-grid">
+            <button data-command="gatewayStatus">Gateway Status</button>
+            <button data-command="systemStatus">Status All</button>
+            <button data-command="gatewayRestart">Gateway Restart</button>
+            <button data-command="channelsList">Channels List</button>
+            <button data-command="doctorFix">Doctor Fix</button>
+            <button id="start-uninstall" class="danger">卸载 OpenClaw</button>
+          </div>
+          <div class="dashboard-box" id="dashboard-box">Dashboard URL 将在这里显示。</div>
+        </article>
+      </section>
+
+      <section class="grid two-up">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>飞书全自动配置</h2>
+          </div>
+          <label>
+            <span>Guide Mode</span>
+            <select id="feishu-guide-mode">
+              <option value="browser">browser</option>
+              <option value="auto">auto</option>
+              <option value="manual">manual</option>
+            </select>
+          </label>
+          <label>
+            <span>App ID</span>
+            <input id="feishu-app-id" type="text" placeholder="cli_xxx">
+          </label>
+          <label>
+            <span>App Secret</span>
+            <input id="feishu-app-secret" type="password" placeholder="secret">
+          </label>
+          <label class="checkbox-row">
+            <input id="feishu-test" type="checkbox" checked>
+            <span>配置后跑一次测试</span>
+          </label>
+          <div class="actions">
+            <button id="run-feishu" class="primary">配置飞书</button>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>其他频道</h2>
+          </div>
+          <label>
+            <span>频道</span>
+            <select id="channel-type">
+              <option value="telegram">telegram</option>
+              <option value="discord">discord</option>
+              <option value="slack">slack</option>
+              <option value="whatsapp">whatsapp</option>
+              <option value="wechat">wechat</option>
+              <option value="imessage">imessage</option>
+            </select>
+          </label>
+          <label>
+            <span>Token</span>
+            <input id="channel-token" type="text" placeholder="Bot token / token">
+          </label>
+          <label>
+            <span>附加 ID</span>
+            <input id="channel-extra-id" type="text" placeholder="Telegram user id / Discord channel id / plugin id">
+          </label>
+          <label>
+            <span>Slack App Token</span>
+            <input id="channel-app-token" type="text" placeholder="xapp-...">
+          </label>
+          <label class="checkbox-row">
+            <input id="channel-test" type="checkbox" checked>
+            <span>配置后跑一次测试</span>
+          </label>
+          <div class="actions">
+            <button id="run-channel">配置频道</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>作业日志</h2>
+          <div class="job-meta" id="job-meta">尚未执行任务</div>
+        </div>
+        <pre id="log-output" class="log-output">等待操作…</pre>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+  </html>

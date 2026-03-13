@@ -3,6 +3,7 @@ param(
     [string]$ApiKey = $env:NEWAPI_API_KEY,
     [string]$ModelId = $env:OPENCLAW_MODEL_ID,
     [int]$GatewayPort = $(if ($env:OPENCLAW_PORT) { [int]$env:OPENCLAW_PORT } else { 18789 }),
+    [string]$ProxyUrl = $env:OPENCLAW_PROXY_URL,
     [switch]$SkipUpstreamCheck,
     [switch]$Uninstall
 )
@@ -191,6 +192,11 @@ function Get-LocalProxyCandidates {
 }
 
 function Initialize-Proxy {
+    if (-not [string]::IsNullOrWhiteSpace($ProxyUrl)) {
+        Set-ProxyEnvironment $ProxyUrl.Trim()
+        return
+    }
+
     if (Proxy-AlreadyConfigured) {
         Write-Info 'Proxy environment variables already set; keeping existing settings'
         return
