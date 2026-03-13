@@ -136,6 +136,9 @@ async function startInstall() {
 }
 
 async function startUninstall() {
+  if (!window.confirm("确认要卸载 OpenClaw 吗？这会调用仓库内置卸载脚本。")) {
+    return;
+  }
   const result = await api("/api/uninstall", {
     method: "POST",
     body: {},

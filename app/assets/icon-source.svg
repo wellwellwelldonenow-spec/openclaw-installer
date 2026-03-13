@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f7f1e7"/>
+      <stop offset="55%" stop-color="#eadfce"/>
+      <stop offset="100%" stop-color="#d9cfbf"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="12%" y1="8%" x2="86%" y2="92%">
+      <stop offset="0%" stop-color="#c55c32"/>
+      <stop offset="100%" stop-color="#7c2813"/>
+    </linearGradient>
+    <linearGradient id="olive" x1="24%" y1="18%" x2="82%" y2="100%">
+      <stop offset="0%" stop-color="#50684d"/>
+      <stop offset="100%" stop-color="#2e3f2d"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="28" stdDeviation="28" flood-color="#2e2115" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <circle cx="792" cy="220" r="118" fill="#fff9f0" opacity="0.7"/>
+  <circle cx="220" cy="192" r="92" fill="#d86f48" opacity="0.12"/>
+  <path d="M164 770c97-168 248-274 453-318 95-20 165-56 240-124v180c-71 52-151 83-252 101-171 31-300 101-392 221-16 21-34 32-49 32-18 0-31-8-39-25-8-16-4-37 39-67z" fill="#ebdfcc"/>
+
+  <g filter="url(#shadow)">
+    <rect x="212" y="184" width="600" height="656" rx="108" fill="#fffdfa" stroke="#d5c4ad" stroke-width="10"/>
+    <rect x="262" y="240" width="500" height="88" rx="26" fill="#f3eadc"/>
+    <circle cx="316" cy="284" r="16" fill="#c55c32"/>
+    <circle cx="362" cy="284" r="16" fill="#d7ad58"/>
+    <circle cx="408" cy="284" r="16" fill="#50684d"/>
+
+    <rect x="280" y="388" width="206" height="206" rx="56" fill="url(#accent)"/>
+    <path d="M341 471h83c50 0 82 27 82 72 0 48-35 79-88 79h-77V471zm61 50v51h18c17 0 27-10 27-25 0-16-10-26-28-26h-17z" fill="#fff6ee"/>
+
+    <rect x="524" y="388" width="188" height="40" rx="20" fill="#e8d8c4"/>
+    <rect x="524" y="454" width="148" height="28" rx="14" fill="#eadfce"/>
+    <rect x="524" y="508" width="170" height="28" rx="14" fill="#eadfce"/>
+    <rect x="524" y="562" width="118" height="28" rx="14" fill="#eadfce"/>
+
+    <rect x="280" y="652" width="432" height="124" rx="42" fill="url(#olive)"/>
+    <path d="M334 712c0-31 24-55 55-55h217c29 0 51 18 55 43l17 1c20 2 34 17 34 36 0 21-15 39-38 39H377c-25 0-43-18-43-40 0-13 6-19 0-24z" fill="#f5efe6" opacity="0.94"/>
+    <circle cx="648" cy="476" r="78" fill="#fff7ed" opacity="0.94"/>
+    <path d="M646 436c-25 0-45 20-45 45 0 19 11 35 27 42v28h36v-28c15-7 27-23 27-42 0-25-20-45-45-45zm0 30a15 15 0 1 1 0 30 15 15 0 0 1 0-30z" fill="#c55c32"/>
+  </g>
+</svg>

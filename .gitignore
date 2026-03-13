@@ -5,3 +5,5 @@ dist-electron/
 release/
 *.log
 *.tsbuildinfo
+app/assets/icon.iconset/
+app/assets/icon-*.png

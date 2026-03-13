@@ -7,7 +7,9 @@ on:
       - main
     paths:
       - "app/**"
+      - "scripts/**"
       - "package.json"
+      - "package-lock.json"
       - "README.md"
       - ".github/workflows/build-desktop.yml"
 
@@ -19,10 +21,10 @@ jobs:
         include:
           - os: macos-latest
             artifact_name: openclaw-control-macos
-            build_args: --mac zip
+            build_script: npm run build:mac
           - os: windows-latest
             artifact_name: openclaw-control-windows
-            build_args: --win portable
+            build_script: npm run build:win
 
     runs-on: ${{ matrix.os }}
 
@@ -39,8 +41,12 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Generate icons
+        if: runner.os == 'macOS'
+        run: npm run generate-icons
+
       - name: Build desktop app
-        run: npm run dist -- ${{ matrix.build_args }}
+        run: ${{ matrix.build_script }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

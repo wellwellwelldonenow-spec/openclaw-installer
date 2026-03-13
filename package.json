@@ -9,7 +9,10 @@
   "scripts": {
     "control-app": "node app/server.mjs",
     "desktop": "electron .",
-    "dist": "electron-builder --publish never"
+    "dist": "electron-builder --publish never",
+    "build:mac": "electron-builder --publish never --mac zip && node scripts/build-mac-dmg.mjs",
+    "build:win": "electron-builder --publish never --win nsis portable",
+    "generate-icons": "node scripts/generate-icons.mjs"
   },
   "build": {
     "appId": "cc.megabyai.openclaw.control",
@@ -17,6 +20,7 @@
     "directories": {
       "output": "dist"
     },
+    "artifactName": "${productName}-${version}-${arch}-${os}.${ext}",
     "files": [
       "app/**/*",
       "install_openclaw.sh",
@@ -30,18 +34,28 @@
     "asar": true,
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "app/assets/icon.icns",
       "target": [
         "zip"
       ]
     },
     "win": {
+      "icon": "app/assets/icon.ico",
       "target": [
+        "nsis",
         "portable"
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     }
   },
   "devDependencies": {
     "electron": "^35.0.1",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "png-to-ico": "^2.1.8"
   }
 }

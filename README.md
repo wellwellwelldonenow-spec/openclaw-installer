@@ -146,7 +146,20 @@ npm install
 npm run dist
 ```
 
+按平台单独打包：
+
+```bash
+npm install
+npm run build:mac
+npm run build:win
+```
+
 当前本地已验证可产出 macOS 包：`dist/OpenClaw Control-0.1.0-arm64-mac.zip`
+
+桌面包形态：
+
+- macOS：`.dmg` 和 `.zip`
+- Windows：安装版 `nsis` 和免安装 `portable`
 
 ## One-Click Channel Setup
 
