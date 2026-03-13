@@ -20,6 +20,7 @@
 - 自动写入 `OPENCLAW_GATEWAY_PORT`、`OPENCLAW_CONFIG_PATH`、`OPENCLAW_STATE_DIR` 到服务环境
 - 默认启用 `browser` tool，并默认使用 `openai-responses`
 - Linux 在启用 `browser` tool 时会自动补装 Chrome/Chromium
+- Linux 在未提供 `NEWAPI_API_KEY` 时，会优先尝试用当前机器 IP 作为用户名/密码自动申请 NewAPI token
 - 如需切回 `openai-completions`，可通过 `OPENCLAW_PROVIDER_API` 手动覆盖
 - 上游接口自动校验，优先使用系统请求栈，失败时自动回退到 `Node.js` TLS 栈
 - 网关健康检查失败时自动执行 `openclaw doctor --fix` 并重装服务后重试
@@ -85,6 +86,20 @@ npm install -g openclaw@latest
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh
 ```
+
+如果你希望 Linux 脚本自动创建 NewAPI 用户并获取 token，请在执行前提供管理 Key：
+
+```bash
+export OPENCLAW_NEWAPI_ADMIN_KEY='YOUR_FIXED_ADMIN_KEY'
+curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh
+```
+
+自动申请规则：
+
+- 用户名默认使用当前机器的主 IPv4
+- 密码默认使用当前机器的主 IPv4
+- `display_name` 默认使用当前机器的主 IPv4
+- 如自动申请失败，会自动回退到原来的手动输入 `NewAPI API Key` 流程
 
 如果用户访问 GitHub 需要显式套代理，可改用：
 

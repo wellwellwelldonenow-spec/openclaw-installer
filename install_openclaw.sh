@@ -9,6 +9,8 @@ API_KEY_ARG=""
 PROXY_URL="${OPENCLAW_PROXY_URL:-}"
 PROVIDER_ID="megabyai"
 BASE_URL="https://newapi.megabyai.cc/v1"
+NEWAPI_USER_CREATE_URL="${OPENCLAW_NEWAPI_USER_CREATE_URL:-https://newapi.megabyai.cc/api/user/}"
+NEWAPI_ADMIN_KEY_DEFAULT="${OPENCLAW_NEWAPI_ADMIN_KEY_DEFAULT:-}"
 MODEL_ID_DEFAULT="gpt-5.3-codex"
 MODEL_ID="${OPENCLAW_MODEL_ID:-$MODEL_ID_DEFAULT}"
 MODEL_NAME="${MODEL_ID} (newapi)"
@@ -723,6 +725,107 @@ ensure_linux_chrome() {
   browser_cmd="$(detect_linux_browser_command 2>/dev/null || true)"
   [ -n "$browser_cmd" ] || fail "浏览器安装命令未出现在 PATH 中，请手动安装 Chrome/Chromium 后重试"
   log "浏览器已就绪：$browser_cmd"
+}
+
+detect_primary_ipv4() {
+  local ip_candidate=""
+
+  if command -v ip >/dev/null 2>&1; then
+    ip_candidate="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}')"
+    if [ -n "$ip_candidate" ]; then
+      printf '%s\n' "$ip_candidate"
+      return 0
+    fi
+  fi
+
+  if command -v hostname >/dev/null 2>&1; then
+    ip_candidate="$(hostname -I 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i !~ /^127\./) { print $i; exit }}')"
+    if [ -n "$ip_candidate" ]; then
+      printf '%s\n' "$ip_candidate"
+      return 0
+    fi
+  fi
+
+  if command -v ifconfig >/dev/null 2>&1; then
+    ip_candidate="$(ifconfig 2>/dev/null | awk '/inet / && $2 !~ /^127\./ { print $2; exit }')"
+    if [ -n "$ip_candidate" ]; then
+      printf '%s\n' "$ip_candidate"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+json_escape() {
+  printf '%s' "$1" | sed \
+    -e 's/\\/\\\\/g' \
+    -e 's/"/\\"/g'
+}
+
+extract_json_string_field() {
+  local json="$1"
+  local field="$2"
+
+  printf '%s\n' "$json" | sed -n "s/.*\"$field\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
+}
+
+request_newapi_token_for_linux() {
+  local admin_key machine_ip payload response_body http_code token created_username effective_key
+  local response_file='/tmp/openclaw_create_user_response.json'
+
+  [ "$OS" = "linux" ] || return 1
+
+  effective_key="${OPENCLAW_NEWAPI_ADMIN_KEY:-$NEWAPI_ADMIN_KEY_DEFAULT}"
+  if [ -z "$effective_key" ]; then
+    warn "未配置 OPENCLAW_NEWAPI_ADMIN_KEY，跳过自动申请 NewAPI token"
+    return 1
+  fi
+
+  machine_ip="$(detect_primary_ipv4 2>/dev/null || true)"
+  if [ -z "$machine_ip" ]; then
+    warn "未能识别当前机器 IPv4，跳过自动申请 NewAPI token"
+    return 1
+  fi
+
+  payload="$(printf '{"username":"%s","password":"%s","display_name":"%s"}' \
+    "$(json_escape "$machine_ip")" \
+    "$(json_escape "$machine_ip")" \
+    "$(json_escape "$machine_ip")")"
+
+  log "尝试使用本机 IP 自动申请 NewAPI token：$machine_ip"
+
+  http_code="$(curl --http1.1 --tlsv1.2 --retry 2 --retry-delay 1 \
+    --connect-timeout 15 --max-time 30 \
+    -sS -o "$response_file" -w '%{http_code}' \
+    -X POST "$NEWAPI_USER_CREATE_URL" \
+    -H "Authorization: Bearer $effective_key" \
+    -H 'Content-Type: application/json' \
+    -d "$payload")" || {
+      warn "自动申请 NewAPI token 请求失败"
+      sed -n '1,40p' "$response_file" >&2 || true
+      return 1
+    }
+
+  response_body="$(cat "$response_file" 2>/dev/null || true)"
+  if [ "$http_code" != "200" ] && [ "$http_code" != "201" ]; then
+    warn "自动申请 NewAPI token 返回 HTTP $http_code"
+    sed -n '1,40p' "$response_file" >&2 || true
+    return 1
+  fi
+
+  token="$(extract_json_string_field "$response_body" token)"
+  created_username="$(extract_json_string_field "$response_body" username)"
+  if [ -z "$token" ]; then
+    warn "自动申请 NewAPI token 成功返回，但未解析到 token 字段"
+    sed -n '1,40p' "$response_file" >&2 || true
+    return 1
+  fi
+
+  NEWAPI_API_KEY="$token"
+  export NEWAPI_API_KEY
+  log "已自动申请 NewAPI token，用户名：${created_username:-$machine_ip}"
+  return 0
 }
 
 prefer_existing_linux_system_node() {
@@ -1460,6 +1563,10 @@ prompt_api_key() {
   NEWAPI_API_KEY="${NEWAPI_API_KEY:-${1:-}}"
   if [ -n "${NEWAPI_API_KEY:-}" ]; then
     export NEWAPI_API_KEY
+    return 0
+  fi
+
+  if request_newapi_token_for_linux; then
     return 0
   fi
 
