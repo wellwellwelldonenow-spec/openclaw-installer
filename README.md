@@ -161,6 +161,12 @@ npm run build:win
 - macOS：`.dmg` 和 `.zip`
 - Windows：安装版 `nsis` 和免安装 `portable`
 
+如果你要让用户“下载就能直接使用”，推荐从仓库的 Releases 页面分发：
+
+- 给仓库打一个 `v*` 版本 tag
+- GitHub Actions 会自动构建桌面应用
+- 构建完成后会把 `.dmg`、`.zip`、`.exe` 上传到 Release Assets
+
 ## One-Click Channel Setup
 
 - macOS / Linux / WSL2:
