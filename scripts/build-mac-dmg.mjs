@@ -40,11 +40,17 @@ async function main() {
   for (const appDir of appDirs) {
     const arch = appDir.name === "mac" ? process.arch : appDir.name.replace(/^mac-/, "");
     const appPath = path.join(distDir, appDir.name, `${productName}.app`);
+    try {
+      await fs.access(appPath);
+    } catch {
+      console.warn(`Skipping ${appDir.name}: ${appPath} not found`);
+      continue;
+    }
     const dmgRoot = path.join(distDir, `dmg-root-${arch}`);
     const dmgPath = path.join(distDir, `${productName}-${version}-${arch}-mac.dmg`);
     await fs.rm(dmgRoot, { recursive: true, force: true });
     await fs.mkdir(dmgRoot, { recursive: true });
-    await fs.cp(appPath, path.join(dmgRoot, `${productName}.app`), { recursive: true });
+    await run("ditto", [appPath, path.join(dmgRoot, `${productName}.app`)]);
     await fs.symlink("/Applications", path.join(dmgRoot, "Applications"));
     await fs.rm(dmgPath, { force: true });
     await run("hdiutil", [
