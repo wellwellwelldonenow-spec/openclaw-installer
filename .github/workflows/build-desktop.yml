@@ -51,11 +51,15 @@ jobs:
         run: npm run generate-icons
 
       - name: Import Apple signing certificate
-        if: runner.os == 'macOS' && secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != ''
+        if: runner.os == 'macOS'
         env:
           APPLE_SIGNING_CERT_BASE64: ${{ secrets.APPLE_SIGNING_CERT_BASE64 }}
           APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
         run: |
+          if [ -z "$APPLE_SIGNING_CERT_BASE64" ] || [ -z "$APPLE_SIGNING_CERT_PASSWORD" ]; then
+            echo "Apple signing secrets not configured; skipping certificate import."
+            exit 0
+          fi
           CERT_PATH="$RUNNER_TEMP/openclaw-signing-cert.p12"
           KEYCHAIN_PATH="$RUNNER_TEMP/openclaw-signing.keychain-db"
           echo "$APPLE_SIGNING_CERT_BASE64" | base64 --decode > "$CERT_PATH"
