@@ -89,6 +89,19 @@ npm install -g openclaw@latest
 curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/install_openclaw.sh -o /tmp/install_openclaw.sh && bash /tmp/install_openclaw.sh
 ```
 
+如果机器已经装过 OpenClaw，但 `browser` 用不了，不想整套重装，可以直接运行单独修复脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/repair_openclaw_browser.sh -o /tmp/repair_openclaw_browser.sh && bash /tmp/repair_openclaw_browser.sh
+```
+
+这个脚本会：
+
+- 自动检测并安装 Chrome/Chromium（Linux）
+- 自动修复 `browser.noSandbox=true`（root 环境）
+- 自动修复 `browser.headless=true`（无 `DISPLAY/WAYLAND_DISPLAY` 环境）
+- 自动重启 Gateway，并执行一次 `openclaw browser start` 自检
+
 如果你希望 Linux 脚本自动创建 NewAPI 用户并获取 token，请在执行前提供管理 Key：
 
 ```bash
