@@ -167,6 +167,21 @@ npm run build:win
 - GitHub Actions 会自动构建桌面应用
 - 构建完成后会把 `.dmg`、`.zip`、`.exe` 上传到 Release Assets
 
+macOS 如果要彻底消除“Apple 无法验证”提示，还需要在仓库 Secrets 中配置：
+
+- `APPLE_SIGNING_CERT_BASE64`
+- `APPLE_SIGNING_CERT_PASSWORD`
+- `APPLE_ID`
+- `APPLE_APP_SPECIFIC_PASSWORD`
+- `APPLE_TEAM_ID`
+
+说明：
+
+- `APPLE_SIGNING_CERT_BASE64` 是 `.p12` 开发者证书的 Base64 文本
+- `APPLE_SIGNING_CERT_PASSWORD` 是该 `.p12` 的导出密码
+- `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` 用于 notarize
+- 未配置这些 Secrets 时，macOS 安装包仍会构建，但不会完成正式签名和 notarize
+
 ## One-Click Channel Setup
 
 - macOS / Linux / WSL2:

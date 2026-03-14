@@ -23,6 +23,7 @@
     "artifactName": "${productName}-${version}-${arch}-${os}.${ext}",
     "files": [
       "app/**/*",
+      "build/**/*",
       "install_openclaw.sh",
       "install_openclaw.ps1",
       "channel_setup.sh",
@@ -32,9 +33,14 @@
       "package.json"
     ],
     "asar": true,
+    "afterSign": "scripts/notarize.mjs",
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "app/assets/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist",
       "target": [
         "zip"
       ]
@@ -54,6 +60,7 @@
     }
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.0",
     "electron": "^35.0.1",
     "electron-builder": "^26.0.12",
     "png-to-ico": "^2.1.8"

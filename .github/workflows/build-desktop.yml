@@ -50,7 +50,28 @@ jobs:
         if: runner.os == 'macOS'
         run: npm run generate-icons
 
+      - name: Import Apple signing certificate
+        if: runner.os == 'macOS' && secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != ''
+        env:
+          APPLE_SIGNING_CERT_BASE64: ${{ secrets.APPLE_SIGNING_CERT_BASE64 }}
+          APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/openclaw-signing-cert.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/openclaw-signing.keychain-db"
+          echo "$APPLE_SIGNING_CERT_BASE64" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p runner "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p runner "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_SIGNING_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k runner "$KEYCHAIN_PATH"
+          echo "CSC_LINK=$CERT_PATH" >> "$GITHUB_ENV"
+          echo "CSC_KEY_PASSWORD=$APPLE_SIGNING_CERT_PASSWORD" >> "$GITHUB_ENV"
+
       - name: Build desktop app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: ${{ matrix.build_script }}
 
       - name: Upload artifact
