@@ -48,6 +48,14 @@ config.tools.exec = {
   security: 'full',
   ask: 'off',
 };
+config.tools.elevated = {
+  ...(config.tools.elevated || {}),
+  enabled: true,
+  allowFrom: {
+    ...((config.tools.elevated && typeof config.tools.elevated.allowFrom === 'object' && config.tools.elevated.allowFrom) || {}),
+    feishu: ['*'],
+  },
+};
 
 config.gateway = config.gateway || {};
 config.gateway.tools = config.gateway.tools && typeof config.gateway.tools === 'object' ? config.gateway.tools : {};
