@@ -12,6 +12,9 @@ param(
     [string]$AppId,
     [string]$AppSecret,
     [string]$PluginId,
+    [switch]$NoAutoApproveFirstDm,
+    [ValidateRange(1, 3600)]
+    [int]$AutoApproveTimeoutSec = 180,
     [switch]$NoRestart,
     [switch]$Test
 )
@@ -30,6 +33,8 @@ $script:ChannelId = $ChannelId
 $script:AppId = $AppId
 $script:AppSecret = $AppSecret
 $script:PluginId = $PluginId
+$script:AutoApproveFirstFeishuDm = -not [bool]$NoAutoApproveFirstDm
+$script:AutoApproveTimeoutSec = $AutoApproveTimeoutSec
 $script:NoRestart = [bool]$NoRestart
 $script:Test = [bool]$Test
 $script:OpenClawBrowserAvailable = $null
@@ -64,6 +69,8 @@ Supported channels:
 Options:
   -ConfigPath "PATH_TO_CONFIG"   Override OpenClaw config path
   -GuideMode "auto|browser|manual"   Feishu guide mode; browser uses openclaw browser
+  -NoAutoApproveFirstDm   Disable automatic approval of the first Feishu DM user
+  -AutoApproveTimeoutSec  How long to wait for the first Feishu DM pairing request
   -NoRestart           Skip gateway restart
   -Test                Run a basic credential test when supported
 '@ | Write-Host
@@ -860,6 +867,125 @@ function Test-FeishuChannel {
     Invoke-RestMethod -Method Post -Uri 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal' -ContentType 'application/json' -Body $body | Out-Null
 }
 
+function Resolve-FeishuAllowFromPath {
+    $configPath = Resolve-ConfigPath
+    $stateDir = Split-Path -Parent $configPath
+    return (Join-Path (Join-Path $stateDir 'credentials') 'feishu-default-allowFrom.json')
+}
+
+function Test-FeishuHasAllowedDmUsers {
+    $allowFromPath = Resolve-FeishuAllowFromPath
+    if (-not (Test-Path $allowFromPath)) {
+        return $false
+    }
+
+    try {
+        $data = Get-Content -Path $allowFromPath -Raw | ConvertFrom-Json
+        $allowFrom = @($data.allowFrom | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        return $allowFrom.Count -gt 0
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-FirstFeishuPairingRequest {
+    try {
+        $raw = Invoke-OpenClaw pairing list feishu --json
+    }
+    catch {
+        return $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $null
+    }
+
+    $start = $raw.IndexOf('{')
+    if ($start -lt 0) {
+        return $null
+    }
+
+    try {
+        $payload = $raw.Substring($start) | ConvertFrom-Json
+    }
+    catch {
+        return $null
+    }
+
+    $requests = @($payload.requests)
+    if ($requests.Count -eq 0) {
+        return $null
+    }
+
+    $sorted = $requests | Sort-Object @{
+        Expression = {
+            try {
+                $timestamp = ''
+                if ($null -ne $_.createdAt -and -not [string]::IsNullOrWhiteSpace([string]$_.createdAt)) {
+                    $timestamp = [string]$_.createdAt
+                }
+                elseif ($null -ne $_.lastSeenAt -and -not [string]::IsNullOrWhiteSpace([string]$_.lastSeenAt)) {
+                    $timestamp = [string]$_.lastSeenAt
+                }
+                [DateTimeOffset]::Parse($timestamp).ToUnixTimeMilliseconds()
+            }
+            catch {
+                0
+            }
+        }
+    }
+
+    $request = $sorted | Select-Object -First 1
+    if ($null -eq $request -or [string]::IsNullOrWhiteSpace([string]$request.code)) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        Code = [string]$request.code
+        Id = [string]$request.id
+    }
+}
+
+function Wait-ApproveFirstFeishuDmUser {
+    if (-not $script:AutoApproveFirstFeishuDm) {
+        return
+    }
+
+    if (Test-FeishuHasAllowedDmUsers) {
+        Write-Info 'Feishu DM allowlist already has entries; skipping first-user auto approval'
+        return
+    }
+
+    $deadline = (Get-Date).AddSeconds($script:AutoApproveTimeoutSec)
+    Write-Info ("Waiting up to {0}s to auto-approve the first Feishu private chat user" -f $script:AutoApproveTimeoutSec)
+    Write-Info 'Send the first private message to the Feishu bot now'
+
+    while ((Get-Date) -lt $deadline) {
+        $request = Get-FirstFeishuPairingRequest
+        if ($null -ne $request) {
+            try {
+                Invoke-OpenClaw pairing approve feishu $request.Code --notify | Out-Null
+                if ([string]::IsNullOrWhiteSpace($request.Id)) {
+                    Write-Info 'Approved first Feishu private chat user'
+                }
+                else {
+                    Write-Info ("Approved first Feishu private chat user: {0}" -f $request.Id)
+                }
+                return
+            }
+            catch {
+                Write-WarnMsg ("Automatic approval for Feishu pairing code {0} failed; retrying" -f $request.Code)
+            }
+        }
+
+        Start-Sleep -Seconds 3
+    }
+
+    Write-WarnMsg ("No Feishu private chat pairing request arrived within {0}s" -f $script:AutoApproveTimeoutSec)
+    Write-WarnMsg "If needed, run: openclaw pairing list feishu --json"
+}
+
 function Setup-Telegram {
     $script:Token = Prompt-Value -Prompt 'Telegram bot token' -Current $script:Token -Secret
     $script:UserId = Prompt-Value -Prompt 'Telegram user/chat id for test (optional)' -Current $script:UserId
@@ -1001,6 +1127,7 @@ function Setup-Feishu {
         Show-FeishuPostConfigGuide
     }
     Test-FeishuChannel
+    Wait-ApproveFirstFeishuDmUser
 }
 
 function Setup-WhatsApp {

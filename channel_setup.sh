@@ -17,6 +17,8 @@ RESTART_GATEWAY=1
 RUN_TEST=0
 INTERACTIVE_MENU=0
 FEISHU_SELECTED_GUIDE_MODE=""
+FEISHU_AUTO_APPROVE_FIRST_DM=1
+FEISHU_AUTO_APPROVE_TIMEOUT_SEC=180
 
 log_info() {
   printf '\033[1;34m[INFO]\033[0m %s\n' "$*"
@@ -50,6 +52,10 @@ Supported channels:
 General options:
   --config-path "PATH_TO_CONFIG"   Override OpenClaw config path
   --guide-mode <mode>    Feishu guide mode: auto, browser, manual
+  --auto-approve-first-dm    Auto-approve the first Feishu DM user after setup (default)
+  --no-auto-approve-first-dm Disable first-user auto approval for Feishu
+  --auto-approve-timeout <seconds>
+                            How long to wait for the first Feishu DM pairing request
   --restart              Restart gateway after changes (default)
   --no-restart           Do not restart gateway
   --test                 Run a basic channel credential test when supported
@@ -644,6 +650,126 @@ run_test_feishu() {
     -d "{\"app_id\":\"${APP_ID}\",\"app_secret\":\"${APP_SECRET}\"}" >/dev/null
 }
 
+resolve_feishu_allow_from_path() {
+  local state_dir=""
+
+  resolve_config_path >/dev/null 2>&1 || true
+  state_dir="$(dirname "$CONFIG_PATH")"
+  printf '%s\n' "$state_dir/credentials/feishu-default-allowFrom.json"
+}
+
+feishu_has_allowed_dm_users() {
+  local allow_from_path=""
+
+  allow_from_path="$(resolve_feishu_allow_from_path)"
+  [ -f "$allow_from_path" ] || return 1
+
+  node - "$allow_from_path" <<'NODE'
+const fs = require('fs');
+
+const filePath = process.argv[2];
+try {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const data = JSON.parse(raw);
+  const allowFrom = Array.isArray(data.allowFrom) ? data.allowFrom.filter((value) => String(value || '').trim()) : [];
+  process.exit(allowFrom.length > 0 ? 0 : 1);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+
+get_first_feishu_pairing_request() {
+  local raw_output=""
+
+  raw_output="$(openclaw pairing list feishu --json 2>/dev/null || true)"
+  [ -n "$raw_output" ] || return 1
+
+  printf '%s' "$raw_output" | node -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+});
+process.stdin.on("end", () => {
+  const start = input.indexOf("{");
+  if (start < 0) {
+    process.exit(1);
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(input.slice(start));
+  } catch {
+    process.exit(1);
+  }
+
+  const requests = Array.isArray(payload.requests) ? payload.requests.slice() : [];
+  requests.sort((left, right) => {
+    const leftTime = Date.parse(left?.createdAt || left?.lastSeenAt || 0) || 0;
+    const rightTime = Date.parse(right?.createdAt || right?.lastSeenAt || 0) || 0;
+    return leftTime - rightTime;
+  });
+
+  const request = requests[0];
+  const code = String(request?.code || "").trim();
+  if (!code) {
+    process.exit(1);
+  }
+
+  const senderId = String(request?.id || "").trim();
+  process.stdout.write(`${code}\t${senderId}`);
+});
+' || return 1
+}
+
+auto_approve_first_feishu_dm_user() {
+  local deadline=0
+  local now=0
+  local request_line=""
+  local code=""
+  local sender_id=""
+
+  [ "$FEISHU_AUTO_APPROVE_FIRST_DM" -eq 1 ] || return 0
+
+  if feishu_has_allowed_dm_users; then
+    log_info "Feishu DM allowlist already has entries; skipping first-user auto approval"
+    return 0
+  fi
+
+  deadline=$(( $(date +%s) + FEISHU_AUTO_APPROVE_TIMEOUT_SEC ))
+  log_info "Waiting up to ${FEISHU_AUTO_APPROVE_TIMEOUT_SEC}s to auto-approve the first Feishu private chat user"
+  log_info "Send the first private message to the Feishu bot now"
+
+  while true; do
+    now="$(date +%s)"
+    [ "$now" -lt "$deadline" ] || break
+
+    request_line="$(get_first_feishu_pairing_request || true)"
+    if [ -n "$request_line" ]; then
+      code="${request_line%%$'\t'*}"
+      sender_id="${request_line#*$'\t'}"
+      [ "$sender_id" = "$request_line" ] && sender_id=""
+
+      if openclaw pairing approve feishu "$code" --notify >/dev/null 2>&1; then
+        if [ -n "$sender_id" ]; then
+          log_info "Approved first Feishu private chat user: $sender_id"
+        else
+          log_info "Approved first Feishu private chat user"
+        fi
+        return 0
+      fi
+
+      log_warn "Automatic approval for Feishu pairing code $code failed; retrying"
+    fi
+
+    sleep 3
+  done
+
+  log_warn "No Feishu private chat pairing request arrived within ${FEISHU_AUTO_APPROVE_TIMEOUT_SEC}s"
+  log_warn "If needed, run: openclaw pairing list feishu --json"
+}
+
 setup_telegram() {
   TOKEN="$(prompt_value "Telegram bot token" "$TOKEN" 1)"
   USER_ID="$(prompt_value "Telegram user/chat id for test (optional)" "$USER_ID" 0)"
@@ -749,6 +875,7 @@ setup_feishu() {
     show_feishu_post_config_guide
   fi
   run_test_feishu
+  auto_approve_first_feishu_dm_user
 }
 
 setup_whatsapp() {
@@ -817,6 +944,16 @@ parse_args() {
         GUIDE_MODE="${2:-}"
         shift
         ;;
+      --auto-approve-first-dm)
+        FEISHU_AUTO_APPROVE_FIRST_DM=1
+        ;;
+      --no-auto-approve-first-dm)
+        FEISHU_AUTO_APPROVE_FIRST_DM=0
+        ;;
+      --auto-approve-timeout)
+        FEISHU_AUTO_APPROVE_TIMEOUT_SEC="${2:-}"
+        shift
+        ;;
       --token)
         TOKEN="${2:-}"
         shift
@@ -872,6 +1009,15 @@ parse_args() {
   case "$GUIDE_MODE" in
     auto|browser|manual) ;;
     *) fail "Unsupported guide mode: $GUIDE_MODE" ;;
+  esac
+
+  case "$FEISHU_AUTO_APPROVE_TIMEOUT_SEC" in
+    ''|*[!0-9]*)
+      fail "Unsupported auto-approve timeout: $FEISHU_AUTO_APPROVE_TIMEOUT_SEC"
+      ;;
+    *)
+      [ "$FEISHU_AUTO_APPROVE_TIMEOUT_SEC" -gt 0 ] || fail "Auto-approve timeout must be greater than 0"
+      ;;
   esac
 
   [ -n "$CHANNEL" ] || fail "Channel is required."
