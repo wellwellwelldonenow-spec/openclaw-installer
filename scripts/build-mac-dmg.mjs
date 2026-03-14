@@ -32,32 +32,35 @@ async function main() {
   const version = pkg.version;
   const distDir = path.join(rootDir, "dist");
   const entries = await fs.readdir(distDir, { withFileTypes: true });
-  const appDir = entries.find((entry) => entry.isDirectory() && entry.name.startsWith("mac"));
-  if (!appDir) {
+  const appDirs = entries.filter((entry) => entry.isDirectory() && entry.name.startsWith("mac"));
+  if (appDirs.length === 0) {
     throw new Error("Could not find dist/mac* output folder");
   }
 
-  const appPath = path.join(distDir, appDir.name, `${productName}.app`);
-  const dmgRoot = path.join(distDir, "dmg-root");
-  const dmgPath = path.join(distDir, `${productName}-${version}-${process.arch}-mac.dmg`);
-  await fs.rm(dmgRoot, { recursive: true, force: true });
-  await fs.mkdir(dmgRoot, { recursive: true });
-  await fs.cp(appPath, path.join(dmgRoot, `${productName}.app`), { recursive: true });
-  await fs.symlink("/Applications", path.join(dmgRoot, "Applications"));
-  await fs.rm(dmgPath, { force: true });
-  await run("hdiutil", [
-    "create",
-    "-volname",
-    `${productName} ${version}`,
-    "-srcfolder",
-    dmgRoot,
-    "-ov",
-    "-format",
-    "UDZO",
-    dmgPath,
-  ]);
-  await fs.rm(dmgRoot, { recursive: true, force: true });
-  console.log(`Generated ${dmgPath}`);
+  for (const appDir of appDirs) {
+    const arch = appDir.name === "mac" ? process.arch : appDir.name.replace(/^mac-/, "");
+    const appPath = path.join(distDir, appDir.name, `${productName}.app`);
+    const dmgRoot = path.join(distDir, `dmg-root-${arch}`);
+    const dmgPath = path.join(distDir, `${productName}-${version}-${arch}-mac.dmg`);
+    await fs.rm(dmgRoot, { recursive: true, force: true });
+    await fs.mkdir(dmgRoot, { recursive: true });
+    await fs.cp(appPath, path.join(dmgRoot, `${productName}.app`), { recursive: true });
+    await fs.symlink("/Applications", path.join(dmgRoot, "Applications"));
+    await fs.rm(dmgPath, { force: true });
+    await run("hdiutil", [
+      "create",
+      "-volname",
+      `${productName} ${version}`,
+      "-srcfolder",
+      dmgRoot,
+      "-ov",
+      "-format",
+      "UDZO",
+      dmgPath,
+    ]);
+    await fs.rm(dmgRoot, { recursive: true, force: true });
+    console.log(`Generated ${dmgPath}`);
+  }
 }
 
 main().catch((error) => {

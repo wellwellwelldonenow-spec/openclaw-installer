@@ -161,6 +161,12 @@ npm run build:win
 - macOS：`.dmg` 和 `.zip`
 - Windows：安装版 `nsis` 和免安装 `portable`
 
+macOS 下载注意：
+
+- Apple Silicon Mac 下载 `arm64` 版本
+- Intel Mac 下载 `x64` 版本
+- 当前桌面包最低要求 macOS 11
+
 如果你要让用户“下载就能直接使用”，推荐从仓库的 Releases 页面分发：
 
 - 给仓库打一个 `v*` 版本 tag

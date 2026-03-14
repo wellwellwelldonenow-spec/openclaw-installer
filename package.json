@@ -10,7 +10,7 @@
     "control-app": "node app/server.mjs",
     "desktop": "electron .",
     "dist": "electron-builder --publish never",
-    "build:mac": "electron-builder --publish never --mac zip && node scripts/build-mac-dmg.mjs",
+    "build:mac": "electron-builder --publish never --mac zip --x64 --arm64 && node scripts/build-mac-dmg.mjs",
     "build:win": "electron-builder --publish never --win nsis portable",
     "generate-icons": "node scripts/generate-icons.mjs"
   },
