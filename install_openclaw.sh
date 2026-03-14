@@ -1254,6 +1254,51 @@ run_openclaw_gateway_rpc_with_service_env() {
   run_openclaw_with_service_env "$config_path" "$state_dir" "$@"
 }
 
+run_openclaw_with_service_env_timeout() {
+  local seconds="$1" config_path="$2" state_dir="$3" timeout_cmd=""
+  shift 3
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd="timeout"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd="gtimeout"
+  fi
+
+  if [ -n "$timeout_cmd" ]; then
+    env \
+      PATH="$(build_service_path)" \
+      OPENCLAW_PORT="$OPENCLAW_PORT" \
+      OPENCLAW_GATEWAY_PORT="$OPENCLAW_PORT" \
+      OPENCLAW_CONFIG_PATH="$config_path" \
+      OPENCLAW_STATE_DIR="$state_dir" \
+      NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache \
+      OPENCLAW_NO_RESPAWN=1 \
+      HTTP_PROXY= \
+      HTTPS_PROXY= \
+      ALL_PROXY= \
+      http_proxy= \
+      https_proxy= \
+      all_proxy= \
+      "$timeout_cmd" "${seconds}s" "$(openclaw_bin_path)" "$@"
+    return $?
+  fi
+
+  run_openclaw_with_service_env "$config_path" "$state_dir" "$@"
+}
+
+run_openclaw_gateway_rpc_with_service_env_timeout() {
+  local seconds="$1" config_path="$2" state_dir="$3" token=""
+  shift 3
+
+  token="$(configured_gateway_token 2>/dev/null || true)"
+  if [ -n "$token" ]; then
+    run_openclaw_with_service_env_timeout "$seconds" "$config_path" "$state_dir" "$@" --token "$token"
+    return $?
+  fi
+
+  run_openclaw_with_service_env_timeout "$seconds" "$config_path" "$state_dir" "$@"
+}
+
 rewrite_linux_gateway_service_unit() {
   local unit_file="$HOME/.config/systemd/user/openclaw-gateway.service" config_path="$1" state_dir="$2"
 
@@ -2077,6 +2122,37 @@ restart_gateway_after_browser_repair() {
   fi
 }
 
+probe_output_indicates_gateway_issue() {
+  case "${1:-}" in
+    *"gateway closed"*|*"Connect: failed - timeout"*|*"ECONNREFUSED"*|*"ETIMEDOUT"*|*"Failed to connect"*|*"connect failed"*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+probe_browser_runtime() {
+  local config_path="$1" state_dir="$2" probe_log="$3" attempt probe_output=""
+
+  for attempt in 1 2 3 4 5; do
+    if run_openclaw_gateway_rpc_with_service_env_timeout 30 "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
+      run_openclaw_gateway_rpc_with_service_env_timeout 30 "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
+      return 0
+    fi
+
+    probe_output="$(cat "$probe_log" 2>/dev/null || true)"
+    if probe_output_indicates_gateway_issue "$probe_output" && [ "$attempt" -lt 5 ]; then
+      sleep 2
+      continue
+    fi
+
+    break
+  done
+
+  return 1
+}
+
 verify_and_repair_browser_runtime() {
   local config_path state_dir probe_log probe_output applied_headless applied_no_sandbox
 
@@ -2086,9 +2162,8 @@ verify_and_repair_browser_runtime() {
   state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
   probe_log="$(mktemp /tmp/openclaw_browser_probe.XXXXXX 2>/dev/null || printf '/tmp/openclaw_browser_probe.log')"
 
-  if run_openclaw_gateway_rpc_with_service_env "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
+  if probe_browser_runtime "$config_path" "$state_dir" "$probe_log"; then
     log "OpenClaw browser 自检通过"
-    run_openclaw_gateway_rpc_with_service_env "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
     rm -f "$probe_log"
     return 0
   fi
@@ -2125,9 +2200,8 @@ verify_and_repair_browser_runtime() {
   restart_gateway_after_browser_repair "$config_path" "$state_dir"
 
   probe_log="$(mktemp /tmp/openclaw_browser_probe.XXXXXX 2>/dev/null || printf '/tmp/openclaw_browser_probe.log')"
-  if run_openclaw_gateway_rpc_with_service_env "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
+  if probe_browser_runtime "$config_path" "$state_dir" "$probe_log"; then
     log "OpenClaw browser 自动修复成功"
-    run_openclaw_gateway_rpc_with_service_env "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
     rm -f "$probe_log"
     return 0
   fi
