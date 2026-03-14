@@ -13,8 +13,8 @@ param(
     [string]$AppSecret,
     [string]$PluginId,
     [switch]$NoAutoApproveFirstDm,
-    [ValidateRange(1, 3600)]
-    [int]$AutoApproveTimeoutSec = 180,
+    [ValidateRange(0, 86400)]
+    [int]$AutoApproveTimeoutSec = 0,
     [switch]$NoRestart,
     [switch]$Test
 )
@@ -70,7 +70,7 @@ Options:
   -ConfigPath "PATH_TO_CONFIG"   Override OpenClaw config path
   -GuideMode "auto|browser|manual"   Feishu guide mode; browser uses openclaw browser
   -NoAutoApproveFirstDm   Disable automatic approval of the first Feishu DM user
-  -AutoApproveTimeoutSec  How long to wait for the first Feishu DM pairing request
+  -AutoApproveTimeoutSec  How long to wait for the first Feishu DM pairing request; 0 means no timeout
   -NoRestart           Skip gateway restart
   -Test                Run a basic credential test when supported
 '@ | Write-Host
@@ -957,11 +957,17 @@ function Wait-ApproveFirstFeishuDmUser {
         return
     }
 
-    $deadline = (Get-Date).AddSeconds($script:AutoApproveTimeoutSec)
-    Write-Info ("Waiting up to {0}s to auto-approve the first Feishu private chat user" -f $script:AutoApproveTimeoutSec)
+    $deadline = $null
+    if ($script:AutoApproveTimeoutSec -gt 0) {
+        $deadline = (Get-Date).AddSeconds($script:AutoApproveTimeoutSec)
+        Write-Info ("Waiting up to {0}s to auto-approve the first Feishu private chat user" -f $script:AutoApproveTimeoutSec)
+    }
+    else {
+        Write-Info 'Waiting without timeout to auto-approve the first Feishu private chat user'
+    }
     Write-Info 'Send the first private message to the Feishu bot now'
 
-    while ((Get-Date) -lt $deadline) {
+    while ($null -eq $deadline -or (Get-Date) -lt $deadline) {
         $request = Get-FirstFeishuPairingRequest
         if ($null -ne $request) {
             try {

@@ -18,7 +18,7 @@ RUN_TEST=0
 INTERACTIVE_MENU=0
 FEISHU_SELECTED_GUIDE_MODE=""
 FEISHU_AUTO_APPROVE_FIRST_DM=1
-FEISHU_AUTO_APPROVE_TIMEOUT_SEC=180
+FEISHU_AUTO_APPROVE_TIMEOUT_SEC=0
 
 log_info() {
   printf '\033[1;34m[INFO]\033[0m %s\n' "$*"
@@ -55,7 +55,7 @@ General options:
   --auto-approve-first-dm    Auto-approve the first Feishu DM user after setup (default)
   --no-auto-approve-first-dm Disable first-user auto approval for Feishu
   --auto-approve-timeout <seconds>
-                            How long to wait for the first Feishu DM pairing request
+                            How long to wait for the first Feishu DM pairing request; 0 means no timeout
   --restart              Restart gateway after changes (default)
   --no-restart           Do not restart gateway
   --test                 Run a basic channel credential test when supported
@@ -737,13 +737,19 @@ auto_approve_first_feishu_dm_user() {
     return 0
   fi
 
-  deadline=$(( $(date +%s) + FEISHU_AUTO_APPROVE_TIMEOUT_SEC ))
-  log_info "Waiting up to ${FEISHU_AUTO_APPROVE_TIMEOUT_SEC}s to auto-approve the first Feishu private chat user"
+  if [ "$FEISHU_AUTO_APPROVE_TIMEOUT_SEC" -gt 0 ]; then
+    deadline=$(( $(date +%s) + FEISHU_AUTO_APPROVE_TIMEOUT_SEC ))
+    log_info "Waiting up to ${FEISHU_AUTO_APPROVE_TIMEOUT_SEC}s to auto-approve the first Feishu private chat user"
+  else
+    log_info "Waiting without timeout to auto-approve the first Feishu private chat user"
+  fi
   log_info "Send the first private message to the Feishu bot now"
 
   while true; do
-    now="$(date +%s)"
-    [ "$now" -lt "$deadline" ] || break
+    if [ "$FEISHU_AUTO_APPROVE_TIMEOUT_SEC" -gt 0 ]; then
+      now="$(date +%s)"
+      [ "$now" -lt "$deadline" ] || break
+    fi
 
     request_line="$(get_first_feishu_pairing_request || true)"
     if [ -n "$request_line" ]; then
@@ -1014,9 +1020,6 @@ parse_args() {
   case "$FEISHU_AUTO_APPROVE_TIMEOUT_SEC" in
     ''|*[!0-9]*)
       fail "Unsupported auto-approve timeout: $FEISHU_AUTO_APPROVE_TIMEOUT_SEC"
-      ;;
-    *)
-      [ "$FEISHU_AUTO_APPROVE_TIMEOUT_SEC" -gt 0 ] || fail "Auto-approve timeout must be greater than 0"
       ;;
   esac
 
