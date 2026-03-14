@@ -20,6 +20,8 @@
 - 自动写入 `OPENCLAW_GATEWAY_PORT`、`OPENCLAW_CONFIG_PATH`、`OPENCLAW_STATE_DIR` 到服务环境
 - 默认启用 `browser` tool，并默认使用 `openai-responses`
 - Linux 在启用 `browser` tool 时会自动补装 Chrome/Chromium
+- Linux 安装时会自动检测 browser 运行环境；若是 `root` 或无图形显示，会自动写入 `browser.noSandbox=true` / `browser.headless=true`
+- 安装完成后会执行一次 `openclaw browser start` 自检；若命中 `Running as root without --no-sandbox` 或 `Missing X server or $DISPLAY`，会自动修复配置并重启 Gateway
 - Linux 在未提供 `NEWAPI_API_KEY` 时，会优先尝试用当前机器 IP 作为用户名/密码自动申请 NewAPI token
 - 如需切回 `openai-completions`，可通过 `OPENCLAW_PROVIDER_API` 手动覆盖
 - 上游接口自动校验，优先使用系统请求栈，失败时自动回退到 `Node.js` TLS 栈

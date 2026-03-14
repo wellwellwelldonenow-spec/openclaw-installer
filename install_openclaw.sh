@@ -18,6 +18,8 @@ ENABLE_BROWSER_TOOL="${OPENCLAW_ENABLE_BROWSER_TOOL:-1}"
 LINUX_FULL_ACCESS_DEFAULTS="${OPENCLAW_LINUX_FULL_ACCESS_DEFAULTS:-1}"
 REQUESTED_PROVIDER_API="${OPENCLAW_PROVIDER_API:-auto}"
 RESOLVED_PROVIDER_API="openai-completions"
+BROWSER_FORCE_HEADLESS=0
+BROWSER_FORCE_NO_SANDBOX=0
 OS=""
 ARCH=""
 TEMP_SWAP_FILE="/var/tmp/openclaw-installer.swap"
@@ -726,6 +728,30 @@ ensure_linux_chrome() {
   browser_cmd="$(detect_linux_browser_command 2>/dev/null || true)"
   [ -n "$browser_cmd" ] || fail "浏览器安装命令未出现在 PATH 中，请手动安装 Chrome/Chromium 后重试"
   log "浏览器已就绪：$browser_cmd"
+}
+
+detect_browser_runtime_preferences() {
+  local -a reasons=()
+
+  BROWSER_FORCE_HEADLESS=0
+  BROWSER_FORCE_NO_SANDBOX=0
+
+  [ "$ENABLE_BROWSER_TOOL" = "1" ] || return 0
+
+  if [ "$OS" = "linux" ] && [ "${EUID:-$(id -u)}" -eq 0 ]; then
+    BROWSER_FORCE_NO_SANDBOX=1
+    reasons+=('当前以 root 身份运行，Chrome 需要 --no-sandbox')
+  fi
+
+  if [ "$OS" = "linux" ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    BROWSER_FORCE_HEADLESS=1
+    reasons+=('当前未检测到 DISPLAY/WAYLAND_DISPLAY，将启用 headless')
+  fi
+
+  if [ "${#reasons[@]}" -gt 0 ]; then
+    log "检测到 browser 运行环境需要额外修复："
+    printf '  - %s\n' "${reasons[@]}"
+  fi
 }
 
 detect_primary_ipv4() {
@@ -1818,12 +1844,26 @@ write_openclaw_config() {
   fi
 
   log "写入 OpenClaw 配置：$config_path"
-  node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" "$OPENCLAW_PORT" "$ENABLE_BROWSER_TOOL" "$RESOLVED_PROVIDER_API" <<'NODE'
+  node - "$config_path" "$NEWAPI_API_KEY" "$BASE_URL" "$PROVIDER_ID" "$MODEL_ID" "$MODEL_NAME" "$OPENCLAW_PORT" "$ENABLE_BROWSER_TOOL" "$RESOLVED_PROVIDER_API" "$BROWSER_FORCE_HEADLESS" "$BROWSER_FORCE_NO_SANDBOX" <<'NODE'
 const fs = require('fs');
 const crypto = require('crypto');
 
-const [configPath, apiKey, baseUrl, providerId, modelId, modelName, gatewayPort, enableBrowserToolRaw, providerApi] = process.argv.slice(2);
+const [
+  configPath,
+  apiKey,
+  baseUrl,
+  providerId,
+  modelId,
+  modelName,
+  gatewayPort,
+  enableBrowserToolRaw,
+  providerApi,
+  forceHeadlessRaw,
+  forceNoSandboxRaw,
+] = process.argv.slice(2);
 const enableBrowserTool = enableBrowserToolRaw === '1';
+const forceHeadless = forceHeadlessRaw === '1';
+const forceNoSandbox = forceNoSandboxRaw === '1';
 
 let config = {};
 if (fs.existsSync(configPath)) {
@@ -1874,6 +1914,13 @@ const denyList = Array.isArray(config.tools.deny) ? config.tools.deny.filter((en
 const denySet = new Set(denyList);
 if (enableBrowserTool) {
   denySet.delete('browser');
+  config.browser = config.browser && typeof config.browser === 'object' ? config.browser : {};
+  if (forceHeadless) {
+    config.browser.headless = true;
+  }
+  if (forceNoSandbox) {
+    config.browser.noSandbox = true;
+  }
 } else {
   denySet.add('browser');
 }
@@ -1896,6 +1943,118 @@ if (typeof config.agents.defaults.memorySearch.provider === 'undefined' && typeo
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
 `);
 NODE
+}
+
+set_browser_runtime_flags() {
+  local config_path="$1" force_headless="${2:-0}" force_no_sandbox="${3:-0}"
+
+  node - "$config_path" "$force_headless" "$force_no_sandbox" <<'NODE'
+const fs = require('fs');
+
+const [configPath, forceHeadlessRaw, forceNoSandboxRaw] = process.argv.slice(2);
+const forceHeadless = forceHeadlessRaw === '1';
+const forceNoSandbox = forceNoSandboxRaw === '1';
+
+let config = {};
+if (fs.existsSync(configPath)) {
+  const raw = fs.readFileSync(configPath, 'utf8').trim();
+  if (raw) {
+    config = JSON.parse(raw);
+  }
+}
+
+config.browser = config.browser && typeof config.browser === 'object' ? config.browser : {};
+
+let changed = false;
+if (forceHeadless && config.browser.headless !== true) {
+  config.browser.headless = true;
+  changed = true;
+}
+if (forceNoSandbox && config.browser.noSandbox !== true) {
+  config.browser.noSandbox = true;
+  changed = true;
+}
+
+if (changed) {
+  fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}
+`);
+}
+
+process.stdout.write(changed ? 'changed\n' : 'unchanged\n');
+NODE
+}
+
+restart_gateway_after_browser_repair() {
+  local config_path="$1" state_dir="$2"
+
+  run_openclaw_with_service_env "$config_path" "$state_dir" gateway restart || \
+    run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
+  sleep 3
+
+  if ! gateway_health_check; then
+    repair_gateway_service
+  fi
+}
+
+verify_and_repair_browser_runtime() {
+  local config_path state_dir probe_log probe_output applied_headless applied_no_sandbox
+
+  [ "$ENABLE_BROWSER_TOOL" = "1" ] || return 0
+
+  config_path="$(resolve_config_path)"
+  state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+  probe_log="$(mktemp /tmp/openclaw_browser_probe.XXXXXX 2>/dev/null || printf '/tmp/openclaw_browser_probe.log')"
+
+  if run_openclaw_with_service_env "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
+    log "OpenClaw browser 自检通过"
+    run_openclaw_with_service_env "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
+    rm -f "$probe_log"
+    return 0
+  fi
+
+  probe_output="$(cat "$probe_log" 2>/dev/null || true)"
+  rm -f "$probe_log"
+
+  applied_headless=0
+  applied_no_sandbox=0
+
+  case "$probe_output" in
+    *"Running as root without --no-sandbox is not supported"*)
+      applied_no_sandbox=1
+      ;;
+  esac
+
+  case "$probe_output" in
+    *"Missing X server or \$DISPLAY"*|*"The platform failed to initialize"*)
+      applied_headless=1
+      ;;
+  esac
+
+  if [ "$applied_headless" -eq 0 ] && [ "$applied_no_sandbox" -eq 0 ]; then
+    warn "browser 自检失败，但未匹配到可自动修复的已知环境问题"
+    printf '%s\n' "$probe_output" >&2
+    return 0
+  fi
+
+  warn "browser 自检命中已知环境问题，尝试自动修复配置并重启网关"
+  [ "$applied_no_sandbox" -eq 1 ] && warn "自动修复：browser.noSandbox=true"
+  [ "$applied_headless" -eq 1 ] && warn "自动修复：browser.headless=true"
+
+  set_browser_runtime_flags "$config_path" "$applied_headless" "$applied_no_sandbox" >/dev/null
+  restart_gateway_after_browser_repair "$config_path" "$state_dir"
+
+  probe_log="$(mktemp /tmp/openclaw_browser_probe.XXXXXX 2>/dev/null || printf '/tmp/openclaw_browser_probe.log')"
+  if run_openclaw_with_service_env "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
+    log "OpenClaw browser 自动修复成功"
+    run_openclaw_with_service_env "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
+    rm -f "$probe_log"
+    return 0
+  fi
+
+  warn "browser 自动修复后仍未通过自检"
+  cat "$probe_log" >&2 || true
+  rm -f "$probe_log"
+  return 0
 }
 
 write_linux_full_access_defaults() {
@@ -2213,6 +2372,7 @@ main() {
   prompt_model
   ensure_node
   ensure_linux_chrome
+  detect_browser_runtime_preferences
   choose_gateway_port
   install_openclaw
   bootstrap_openclaw
@@ -2224,6 +2384,7 @@ main() {
   write_linux_full_access_defaults
   validate_openclaw
   install_and_start_gateway
+  verify_and_repair_browser_runtime
   probe_provider || true
   open_dashboard_ui
 
