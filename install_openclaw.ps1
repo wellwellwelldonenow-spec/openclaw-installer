@@ -1951,18 +1951,31 @@ function Install-AndStartGateway {
 function Get-ConfigPath {
     try {
         $lines = Invoke-OpenClaw config file 2>$null
-        $last = ($lines | Select-Object -Last 1).Trim()
-        if (-not [string]::IsNullOrWhiteSpace($last)) {
-            if ($last.StartsWith('~/') -or $last.StartsWith('~\')) {
-                return (Join-Path $HOME ($last.Substring(2) -replace '/', '\'))
+        $candidates = @(
+            $lines |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        )
+
+        foreach ($line in $candidates) {
+            $candidate = $line
+            if ($candidate -match '^(?i)config\s+file\s*:\s*(.+)$') {
+                $candidate = $matches[1].Trim()
             }
-            if ($last.StartsWith('$HOME/')) {
-                return (Join-Path $HOME ($last.Substring(6) -replace '/', '\'))
+
+            if ($candidate.StartsWith('~/') -or $candidate.StartsWith('~\')) {
+                return (Join-Path $HOME ($candidate.Substring(2) -replace '/', '\'))
             }
-            if ($last.StartsWith('$HOME\')) {
-                return (Join-Path $HOME $last.Substring(6))
+            if ($candidate.StartsWith('$HOME/')) {
+                return (Join-Path $HOME ($candidate.Substring(6) -replace '/', '\'))
             }
-            return $last
+            if ($candidate.StartsWith('$HOME\')) {
+                return (Join-Path $HOME $candidate.Substring(6))
+            }
+
+            if ($candidate -match '(?i)([\\/]|^[A-Z]:|^\\\\|(^|[\\/])openclaw\.json$)') {
+                return $candidate
+            }
         }
     } catch {}
 

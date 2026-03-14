@@ -39,6 +39,23 @@ fail() {
   exit 1
 }
 
+run_with_timeout() {
+  local seconds="$1"
+  shift
+
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${seconds}s" "$@"
+    return $?
+  fi
+
+  if command -v gtimeout >/dev/null 2>&1; then
+    gtimeout "${seconds}s" "$@"
+    return $?
+  fi
+
+  "$@"
+}
+
 cleanup() {
   rm -f /tmp/nodesource_setup_22.sh /tmp/openclaw_models_check.json /tmp/openclaw_xcode_install.log
 
@@ -1203,6 +1220,40 @@ run_openclaw_with_service_env() {
     "$(openclaw_bin_path)" "$@"
 }
 
+configured_gateway_token() {
+  local config_path configured_token=""
+
+  config_path="$(resolve_config_path)"
+  configured_token="$(node - "$config_path" <<'NODE'
+const fs = require('fs');
+const configPath = process.argv[2];
+try {
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const token = config && config.gateway && config.gateway.auth && config.gateway.auth.token;
+  if (typeof token === 'string' && token.trim()) {
+    process.stdout.write(token.trim());
+  }
+} catch {}
+NODE
+)"
+
+  [ -n "$configured_token" ] || return 1
+  printf '%s\n' "$configured_token"
+}
+
+run_openclaw_gateway_rpc_with_service_env() {
+  local config_path="$1" state_dir="$2" token=""
+  shift 2
+
+  token="$(configured_gateway_token 2>/dev/null || true)"
+  if [ -n "$token" ]; then
+    run_openclaw_with_service_env "$config_path" "$state_dir" "$@" --token "$token"
+    return $?
+  fi
+
+  run_openclaw_with_service_env "$config_path" "$state_dir" "$@"
+}
+
 rewrite_linux_gateway_service_unit() {
   local unit_file="$HOME/.config/systemd/user/openclaw-gateway.service" config_path="$1" state_dir="$2"
 
@@ -1366,12 +1417,8 @@ gateway_log_path() {
 gateway_health_check() {
   local status_output
 
-  if openclaw gateway health >/dev/null 2>&1; then
-    return 0
-  fi
-
   status_output="$(mktemp /tmp/openclaw_gateway_status.XXXXXX 2>/dev/null || printf '/tmp/openclaw_gateway_status.txt')"
-  openclaw gateway status --deep >"$status_output" 2>&1 || true
+  run_with_timeout 20 openclaw gateway status --deep >"$status_output" 2>&1 || true
   grep -q 'RPC probe: ok' "$status_output"
 }
 
@@ -1820,8 +1867,9 @@ bootstrap_openclaw() {
 }
 
 resolve_config_path() {
-  local config_path
-  config_path="$(openclaw config file 2>/dev/null | awk 'NF { path=$0 } END { print path }')"
+  local config_path raw_output
+  raw_output="$(openclaw config file 2>/dev/null || true)"
+  config_path="$(normalize_config_path "$raw_output" 2>/dev/null || true)"
   if [ -z "$config_path" ]; then
     config_path="$HOME/.openclaw/openclaw.json"
   fi
@@ -1832,6 +1880,39 @@ resolve_config_path() {
   esac
 
   printf '%s\n' "$config_path"
+}
+
+normalize_config_path() {
+  local raw_output="${1:-}" line="" candidate=""
+
+  while IFS= read -r line; do
+    line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$line" ] || continue
+
+    candidate="$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[Cc]onfig[[:space:]]+file[[:space:]]*:[[:space:]]*//')"
+    candidate="${candidate%\"}"
+    candidate="${candidate#\"}"
+    candidate="${candidate%\'}"
+    candidate="${candidate#\'}"
+
+    case "$candidate" in
+      "~/"*) candidate="$HOME/${candidate#\~/}" ;;
+      "~\\"*) candidate="$HOME/${candidate#\~\\}"; candidate="${candidate//\\//}" ;;
+      '$HOME/'*) candidate="$HOME/${candidate#\$HOME/}" ;;
+      '$HOME\\'*) candidate="$HOME/${candidate#\$HOME\\}"; candidate="${candidate//\\//}" ;;
+    esac
+
+    case "$candidate" in
+      *[\\/]*|openclaw.json)
+        printf '%s\n' "$candidate"
+        return 0
+        ;;
+    esac
+  done <<EOF
+$raw_output
+EOF
+
+  return 1
 }
 
 write_openclaw_config() {
@@ -2005,9 +2086,9 @@ verify_and_repair_browser_runtime() {
   state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
   probe_log="$(mktemp /tmp/openclaw_browser_probe.XXXXXX 2>/dev/null || printf '/tmp/openclaw_browser_probe.log')"
 
-  if run_openclaw_with_service_env "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
+  if run_openclaw_gateway_rpc_with_service_env "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
     log "OpenClaw browser 自检通过"
-    run_openclaw_with_service_env "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
+    run_openclaw_gateway_rpc_with_service_env "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
     rm -f "$probe_log"
     return 0
   fi
@@ -2044,9 +2125,9 @@ verify_and_repair_browser_runtime() {
   restart_gateway_after_browser_repair "$config_path" "$state_dir"
 
   probe_log="$(mktemp /tmp/openclaw_browser_probe.XXXXXX 2>/dev/null || printf '/tmp/openclaw_browser_probe.log')"
-  if run_openclaw_with_service_env "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
+  if run_openclaw_gateway_rpc_with_service_env "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
     log "OpenClaw browser 自动修复成功"
-    run_openclaw_with_service_env "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
+    run_openclaw_gateway_rpc_with_service_env "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
     rm -f "$probe_log"
     return 0
   fi

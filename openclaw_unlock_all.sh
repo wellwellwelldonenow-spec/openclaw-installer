@@ -12,7 +12,40 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-config_path="$(openclaw config file 2>/dev/null | awk 'NF { path=$0 } END { print path }')"
+normalize_config_path() {
+  local raw_output="${1:-}" line="" candidate=""
+
+  while IFS= read -r line; do
+    line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$line" ] || continue
+
+    candidate="$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[Cc]onfig[[:space:]]+file[[:space:]]*:[[:space:]]*//')"
+    candidate="${candidate%\"}"
+    candidate="${candidate#\"}"
+    candidate="${candidate%\'}"
+    candidate="${candidate#\'}"
+
+    case "$candidate" in
+      "~/"*) candidate="$HOME/${candidate#\~/}" ;;
+      "~\\"*) candidate="$HOME/${candidate#\~\\}"; candidate="${candidate//\\//}" ;;
+      '$HOME/'*) candidate="$HOME/${candidate#\$HOME/}" ;;
+      '$HOME\\'*) candidate="$HOME/${candidate#\$HOME\\}"; candidate="${candidate//\\//}" ;;
+    esac
+
+    case "$candidate" in
+      *[\\/]*|openclaw.json)
+        printf '%s\n' "$candidate"
+        return 0
+        ;;
+    esac
+  done <<EOF
+$raw_output
+EOF
+
+  return 1
+}
+
+config_path="$(normalize_config_path "$(openclaw config file 2>/dev/null || true)" 2>/dev/null || true)"
 [ -n "$config_path" ] || config_path="$HOME/.openclaw/openclaw.json"
 
 case "$config_path" in

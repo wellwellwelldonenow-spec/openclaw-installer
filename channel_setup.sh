@@ -435,34 +435,37 @@ check_openclaw() {
 
 normalize_config_path() {
   local raw_output="${1:-}"
-  local candidate=""
   local line=""
 
   while IFS= read -r line; do
     line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     [ -n "$line" ] || continue
-    candidate="$line"
+    local candidate="$line"
+
+    candidate="$(printf '%s' "$candidate" | sed -E 's/^[[:space:]]*[Cc]onfig[[:space:]]+file[[:space:]]*:[[:space:]]*//')"
+    candidate="${candidate%\"}"
+    candidate="${candidate#\"}"
+    candidate="${candidate%\'}"
+    candidate="${candidate#\'}"
+
+    case "$candidate" in
+      "~/"*) candidate="$HOME/${candidate#\~/}" ;;
+      "~\\"*) candidate="$HOME/${candidate#\~\\}"; candidate="${candidate//\\//}" ;;
+      '$HOME/'*) candidate="$HOME/${candidate#\$HOME/}" ;;
+      '$HOME\\'*) candidate="$HOME/${candidate#\$HOME\\}"; candidate="${candidate//\\//}" ;;
+    esac
+
+    case "$candidate" in
+      *[\\/]*|openclaw.json)
+        printf '%s\n' "$candidate"
+        return 0
+        ;;
+    esac
   done <<EOF
 $raw_output
 EOF
 
-  candidate="$(printf '%s' "$candidate" | sed -E 's/^[[:space:]]*[Cc]onfig[[:space:]]+file[[:space:]]*:[[:space:]]*//')"
-  candidate="${candidate%\"}"
-  candidate="${candidate#\"}"
-  candidate="${candidate%\'}"
-  candidate="${candidate#\'}"
-
-  case "$candidate" in
-    "~/"*) candidate="$HOME/${candidate#\~/}" ;;
-    "~\\"*) candidate="$HOME/${candidate#\~\\}"; candidate="${candidate//\\//}" ;;
-    '$HOME/'*) candidate="$HOME/${candidate#\$HOME/}" ;;
-    '$HOME\\'*) candidate="$HOME/${candidate#\$HOME\\}"; candidate="${candidate//\\//}" ;;
-  esac
-
-  case "$candidate" in
-    *[\\/]*|openclaw.json) printf '%s\n' "$candidate" ;;
-    *) return 1 ;;
-  esac
+  return 1
 }
 
 resolve_config_path() {
