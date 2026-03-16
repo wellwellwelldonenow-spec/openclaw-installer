@@ -28,7 +28,6 @@
       "install_openclaw.ps1",
       "channel_setup.sh",
       "channel_setup.ps1",
-      "feishu_browser_automation.js",
       "README.md",
       "package.json"
     ],

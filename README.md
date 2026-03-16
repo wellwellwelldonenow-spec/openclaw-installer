@@ -132,7 +132,7 @@ OPENCLAW_PROXY_URL='http://YOUR_PROXY_HOST:PORT' HTTP_PROXY='http://YOUR_PROXY_H
 - 应用内临时代理默认启用白名单规则，只允许 GitHub 和安装链路必需域名
 - 提供 `openclaw dashboard`、`gateway status --deep`、`doctor --fix`、`channels list` 等常用按钮
 - 提供卸载 OpenClaw 按钮，直接调用仓库现有卸载脚本
-- 提供飞书全自动配置按钮，也可配置 Telegram / Discord / Slack 等频道
+- 提供飞书官方插件配置入口，也可配置 Telegram / Discord / Slack 等频道
 
 启动方式：
 
@@ -237,7 +237,7 @@ Examples:
 ```bash
 bash /tmp/channel_setup.sh discord --token "YOUR_BOT_TOKEN" --channel-id "YOUR_CHANNEL_ID" --test
 bash /tmp/channel_setup.sh slack --bot-token "YOUR_XOXB_TOKEN" --app-token "YOUR_XAPP_TOKEN" --test
-bash /tmp/channel_setup.sh feishu --guide-mode browser --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
+bash /tmp/channel_setup.sh feishu --guide-mode manual --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
 bash /tmp/channel_setup.sh whatsapp
 ```
 
@@ -245,7 +245,7 @@ bash /tmp/channel_setup.sh whatsapp
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel discord -Token "YOUR_BOT_TOKEN" -ChannelId "YOUR_CHANNEL_ID" -Test
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel slack -BotToken "YOUR_XOXB_TOKEN" -AppToken "YOUR_XAPP_TOKEN" -Test
-powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel feishu -GuideMode browser -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
+powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel feishu -GuideMode manual -AppId "YOUR_APP_ID" -AppSecret "YOUR_APP_SECRET" -Test
 powershell -NoProfile -ExecutionPolicy Bypass -File $script -Channel whatsapp
 ```
 
@@ -256,8 +256,9 @@ The channel setup scripts try to:
 - configure the channel with `openclaw` CLI
 - optionally restart the gateway and run a basic credential test
 - enter a Chinese interactive menu automatically when run without arguments
-- for Feishu, let the user choose `browser` mode or `manual` mode; `browser` mode prefers `openclaw browser`, prompts the user to scan login, then auto-continues after login is detected
-- for Feishu, open the developer console and guide app creation, bot capability, permissions, and long-connection event setup
+- for Feishu, prefer the bundled official `@openclaw/feishu` plugin and fall back to installing the official package only when the bundled plugin is unavailable
+- for Feishu, guide app creation, bot capability, permission batch import, long-connection (`WebSocket`) event setup, and app publishing in the official console flow
+- for Feishu, the operator guidance follows the official plugin doc: `https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh`
 
 Use `openclaw channels list` and `openclaw gateway status --deep` after setup to verify the result.
 
