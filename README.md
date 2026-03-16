@@ -238,6 +238,7 @@ Examples:
 ```bash
 bash /tmp/channel_setup.sh discord --token "YOUR_BOT_TOKEN" --channel-id "YOUR_CHANNEL_ID" --test
 bash /tmp/channel_setup.sh slack --bot-token "YOUR_XOXB_TOKEN" --app-token "YOUR_XAPP_TOKEN" --test
+bash /tmp/channel_setup.sh feishu --guide-mode browser --test
 bash /tmp/channel_setup.sh feishu --guide-mode manual --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
 bash /tmp/channel_setup.sh feishu --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --feishu-web-auth-secret "megaaifeishu" --test
 bash /tmp/channel_setup.sh whatsapp
@@ -259,7 +260,8 @@ The channel setup scripts try to:
 - optionally restart the gateway and run a basic credential test
 - enter a Chinese interactive menu automatically when run without arguments
 - for Feishu, prefer the bundled official `@openclaw/feishu` plugin and fall back to installing the official package only when the bundled plugin is unavailable
-- for Feishu, guide app creation, bot capability, permission batch import, long-connection (`WebSocket`) event setup, and app publishing in the official console flow
+- for Feishu on Linux/macOS with `openclaw browser` available, default to the new-bot flow: open the official console, wait for Feishu login, auto-create the app/bot, capture `App ID` + `App Secret`, and finish the required console setup automatically
+- for Feishu, keep a manual existing-bot binding flow when you already have `App ID` + `App Secret`
 - for Feishu, the operator guidance follows the official plugin doc: `https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh`
 - for Feishu on Linux, start a temporary web page before `openclaw channels add --channel feishu`; after entering the access key `megaaifeishu`, the operator can click a button to generate a Feishu auth link, complete OAuth, then let the script continue automatically
 - for Feishu on Linux, the temporary page defaults to port `38459`; use `--feishu-web-auth-public-base-url` when the host is behind NAT/reverse proxy, or `--no-feishu-web-auth` to skip this step

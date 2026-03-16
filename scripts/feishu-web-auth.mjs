@@ -955,6 +955,15 @@ async function main() {
   publicBaseUrl = await detectPublicBaseUrl(listenPort);
   const localBaseUrl = `http://127.0.0.1:${listenPort}`;
 
+  log("");
+  log("========== Feishu Temporary Web Auth ==========");
+  log(`临时网页授权地址（公网）: ${publicBaseUrl}`);
+  log(`临时网页授权地址（本地）: ${localBaseUrl}`);
+  log(`访问密钥: ${options.authSecret}`);
+  log("操作说明: 打开上面的网页地址，输入访问密钥，点击“进行飞书授权”。");
+  log("授权完成后脚本会自动继续，网页可以直接关闭。");
+  log("==============================================");
+  log("");
   log(`[feishu-web-auth] local_url=${localBaseUrl}`);
   log(`[feishu-web-auth] public_url=${publicBaseUrl}`);
   log(`[feishu-web-auth] access_key=${options.authSecret}`);
