@@ -23,6 +23,7 @@
 - Linux 安装时会自动检测 browser 运行环境；若是 `root` 或无图形显示，会自动写入 `browser.noSandbox=true` / `browser.headless=true`
 - 安装完成后会执行一次 `openclaw browser start` 自检；若命中 `Running as root without --no-sandbox` 或 `Missing X server or $DISPLAY`，会自动修复配置并重启 Gateway
 - Linux 在未提供 `NEWAPI_API_KEY` 时，会优先尝试用当前机器 IP 作为用户名/密码自动申请 NewAPI token
+- Linux 的飞书脚本默认会先启动一个临时网页授权页，要求输入访问密钥 `megaaifeishu` 后才能生成飞书授权链接；授权成功后脚本自动继续，网页可关闭
 - 如需切回 `openai-completions`，可通过 `OPENCLAW_PROVIDER_API` 手动覆盖
 - 上游接口自动校验，优先使用系统请求栈，失败时自动回退到 `Node.js` TLS 栈
 - 网关健康检查失败时自动执行 `openclaw doctor --fix` 并重装服务后重试
@@ -238,6 +239,7 @@ Examples:
 bash /tmp/channel_setup.sh discord --token "YOUR_BOT_TOKEN" --channel-id "YOUR_CHANNEL_ID" --test
 bash /tmp/channel_setup.sh slack --bot-token "YOUR_XOXB_TOKEN" --app-token "YOUR_XAPP_TOKEN" --test
 bash /tmp/channel_setup.sh feishu --guide-mode manual --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --test
+bash /tmp/channel_setup.sh feishu --app-id "YOUR_APP_ID" --app-secret "YOUR_APP_SECRET" --feishu-web-auth-secret "megaaifeishu" --test
 bash /tmp/channel_setup.sh whatsapp
 ```
 
@@ -259,6 +261,8 @@ The channel setup scripts try to:
 - for Feishu, prefer the bundled official `@openclaw/feishu` plugin and fall back to installing the official package only when the bundled plugin is unavailable
 - for Feishu, guide app creation, bot capability, permission batch import, long-connection (`WebSocket`) event setup, and app publishing in the official console flow
 - for Feishu, the operator guidance follows the official plugin doc: `https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh`
+- for Feishu on Linux, start a temporary web page before `openclaw channels add --channel feishu`; after entering the access key `megaaifeishu`, the operator can click a button to generate a Feishu auth link, complete OAuth, then let the script continue automatically
+- for Feishu on Linux, the temporary page defaults to port `38459`; use `--feishu-web-auth-public-base-url` when the host is behind NAT/reverse proxy, or `--no-feishu-web-auth` to skip this step
 
 Use `openclaw channels list` and `openclaw gateway status --deep` after setup to verify the result.
 

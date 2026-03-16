@@ -18,6 +18,11 @@ RUN_TEST=0
 INTERACTIVE_MENU=0
 FEISHU_AUTO_APPROVE_FIRST_DM=1
 FEISHU_AUTO_APPROVE_TIMEOUT_SEC=0
+FEISHU_WEB_AUTH_ENABLED=1
+FEISHU_WEB_AUTH_SECRET="megaaifeishu"
+FEISHU_WEB_AUTH_TIMEOUT_SEC=900
+FEISHU_WEB_AUTH_PORT=38459
+FEISHU_WEB_AUTH_PUBLIC_BASE_URL=""
 
 log_info() {
   printf '\033[1;34m[INFO]\033[0m %s\n' "$*"
@@ -55,6 +60,16 @@ General options:
   --no-auto-approve-first-dm Disable first-user auto approval for Feishu
   --auto-approve-timeout <seconds>
                             How long to wait for the first Feishu DM pairing request; 0 means no timeout
+  --feishu-web-auth         Enable Linux temporary Feishu web auth page (default)
+  --no-feishu-web-auth      Skip the temporary Feishu web auth page on Linux
+  --feishu-web-auth-secret <secret>
+                            Access key for the temporary Feishu web auth page (default: megaaifeishu)
+  --feishu-web-auth-port <port>
+                            Public listen port for the temporary Feishu web auth page (default: 38459)
+  --feishu-web-auth-timeout <seconds>
+                            Max wait time for temporary Feishu web auth success (default: 900)
+  --feishu-web-auth-public-base-url <url>
+                            Optional public URL to print when the Linux host is behind a reverse proxy/NAT
   --restart              Restart gateway after changes (default)
   --no-restart           Do not restart gateway
   --test                 Run a basic channel credential test when supported
@@ -84,6 +99,21 @@ EOF
 
 is_interactive_terminal() {
   [ -t 0 ] && [ -t 1 ]
+}
+
+is_linux_host() {
+  case "$(uname -s 2>/dev/null || true)" in
+    Linux*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_script_dir() {
+  local source_path="${BASH_SOURCE[0]:-$0}"
+  local dir_path=""
+
+  dir_path="$(cd "$(dirname "$source_path")" >/dev/null 2>&1 && pwd)" || return 1
+  printf '%s\n' "$dir_path"
 }
 
 prompt_yes_no() {
@@ -194,6 +224,9 @@ show_feishu_setup_guide() {
   printf '%s\n' $'  4. \u5f00\u542f\u5e94\u7528\u80fd\u529b\uff1a\u673a\u5668\u4eba\uff0c\u5e76\u6279\u91cf\u5f00\u901a\u6d88\u606f/\u7fa4\u7ec4/\u6587\u6863\u6240\u9700\u6743\u9650\u3002'
   printf '%s\n' $'  5. \u914d\u7f6e\u4e8b\u4ef6\u8ba2\u9605\u65b9\u5f0f\u4e3a\u957f\u8fde\u63a5\uff08WebSocket\uff09\uff0c\u5e76\u6dfb\u52a0 `im.message.receive_v1`\u3002'
   printf '%s\n' $'  6. \u521b\u5efa\u7248\u672c\u5e76\u53d1\u5e03\u5e94\u7528\u3002'
+  if is_linux_host; then
+    printf '%s\n' $'  7. Linux \u811a\u672c\u7a0d\u540e\u4f1a\u542f\u52a8\u4e34\u65f6 Feishu \u7f51\u9875\u6388\u6743\u9875\uff0c\u9ed8\u8ba4\u8bbf\u95ee\u5bc6\u94a5\u4e3a `megaaifeishu`\u3002'
+  fi
   wait_for_enter $'\u5b8c\u6210\u4ee5\u4e0a\u6b65\u9aa4\u540e\u6309\u56de\u8f66\u7ee7\u7eed\u3002'
 }
 
@@ -621,6 +654,69 @@ auto_approve_first_feishu_dm_user() {
   log_warn "If needed, run: openclaw pairing list feishu --json"
 }
 
+resolve_feishu_web_auth_helper() {
+  local repo_dir=""
+  local helper_path=""
+  local temp_path=""
+  local helper_url="https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/scripts/feishu-web-auth.mjs"
+
+  repo_dir="$(resolve_script_dir 2>/dev/null || true)"
+  if [ -n "$repo_dir" ]; then
+    helper_path="$repo_dir/scripts/feishu-web-auth.mjs"
+    if [ -f "$helper_path" ]; then
+      printf '%s\n' "$helper_path"
+      return 0
+    fi
+  fi
+
+  command -v curl >/dev/null 2>&1 || fail "curl not found. Unable to download the Feishu web auth helper."
+  temp_path="$(mktemp /tmp/openclaw_feishu_web_auth.XXXXXX.mjs 2>/dev/null || printf '/tmp/openclaw_feishu_web_auth.mjs')"
+  curl -fsSL "$helper_url" -o "$temp_path" || fail "Failed to download Feishu web auth helper from $helper_url"
+  printf '%s\n' "$temp_path"
+}
+
+run_feishu_linux_web_auth() {
+  local helper_path=""
+  local cleanup_helper=0
+  local node_args=()
+
+  is_linux_host || return 0
+  [ "$FEISHU_WEB_AUTH_ENABLED" -eq 1 ] || {
+    log_info "Skipping temporary Feishu web auth page on Linux"
+    return 0
+  }
+
+  helper_path="$(resolve_feishu_web_auth_helper)"
+  case "$helper_path" in
+    /tmp/openclaw_feishu_web_auth.*.mjs|/tmp/openclaw_feishu_web_auth.mjs) cleanup_helper=1 ;;
+  esac
+
+  log_info "Starting temporary Feishu web auth page before channel creation"
+  log_info "Default access key: ${FEISHU_WEB_AUTH_SECRET}"
+
+  node_args=(
+    "$helper_path"
+    --app-id "$APP_ID"
+    --app-secret "$APP_SECRET"
+    --auth-secret "$FEISHU_WEB_AUTH_SECRET"
+    --port "$FEISHU_WEB_AUTH_PORT"
+    --timeout-sec "$FEISHU_WEB_AUTH_TIMEOUT_SEC"
+    --brand feishu
+  )
+
+  if [ -n "$FEISHU_WEB_AUTH_PUBLIC_BASE_URL" ]; then
+    node_args+=(--public-base-url "$FEISHU_WEB_AUTH_PUBLIC_BASE_URL")
+  fi
+
+  if ! node "${node_args[@]}"; then
+    [ "$cleanup_helper" -eq 1 ] && rm -f "$helper_path"
+    fail "Feishu temporary web auth step failed."
+  fi
+
+  [ "$cleanup_helper" -eq 1 ] && rm -f "$helper_path"
+  log_info "Temporary Feishu web auth completed, continuing channel setup"
+}
+
 setup_telegram() {
   TOKEN="$(prompt_value "Telegram bot token" "$TOKEN" 1)"
   USER_ID="$(prompt_value "Telegram user/chat id for test (optional)" "$USER_ID" 0)"
@@ -682,6 +778,7 @@ setup_feishu() {
   APP_SECRET="$(prompt_value "Feishu app secret" "$APP_SECRET" 1)"
   require_value "--app-id" "$APP_ID"
   require_value "--app-secret" "$APP_SECRET"
+  run_feishu_linux_web_auth
 
   if ! openclaw plugins enable feishu >/dev/null 2>&1; then
     log_info "Bundled Feishu plugin not available, installing official package @openclaw/feishu"
@@ -784,6 +881,28 @@ parse_args() {
         FEISHU_AUTO_APPROVE_TIMEOUT_SEC="${2:-}"
         shift
         ;;
+      --feishu-web-auth)
+        FEISHU_WEB_AUTH_ENABLED=1
+        ;;
+      --no-feishu-web-auth)
+        FEISHU_WEB_AUTH_ENABLED=0
+        ;;
+      --feishu-web-auth-secret)
+        FEISHU_WEB_AUTH_SECRET="${2:-}"
+        shift
+        ;;
+      --feishu-web-auth-port)
+        FEISHU_WEB_AUTH_PORT="${2:-}"
+        shift
+        ;;
+      --feishu-web-auth-timeout)
+        FEISHU_WEB_AUTH_TIMEOUT_SEC="${2:-}"
+        shift
+        ;;
+      --feishu-web-auth-public-base-url)
+        FEISHU_WEB_AUTH_PUBLIC_BASE_URL="${2:-}"
+        shift
+        ;;
       --token)
         TOKEN="${2:-}"
         shift
@@ -844,6 +963,18 @@ parse_args() {
   case "$FEISHU_AUTO_APPROVE_TIMEOUT_SEC" in
     ''|*[!0-9]*)
       fail "Unsupported auto-approve timeout: $FEISHU_AUTO_APPROVE_TIMEOUT_SEC"
+      ;;
+  esac
+
+  case "$FEISHU_WEB_AUTH_TIMEOUT_SEC" in
+    ''|*[!0-9]*)
+      fail "Unsupported Feishu web auth timeout: $FEISHU_WEB_AUTH_TIMEOUT_SEC"
+      ;;
+  esac
+
+  case "$FEISHU_WEB_AUTH_PORT" in
+    ''|*[!0-9]*)
+      fail "Unsupported Feishu web auth port: $FEISHU_WEB_AUTH_PORT"
       ;;
   esac
 

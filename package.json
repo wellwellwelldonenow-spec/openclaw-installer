@@ -28,6 +28,7 @@
       "install_openclaw.ps1",
       "channel_setup.sh",
       "channel_setup.ps1",
+      "scripts/**/*",
       "README.md",
       "package.json"
     ],
