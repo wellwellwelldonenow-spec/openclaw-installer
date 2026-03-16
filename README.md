@@ -260,10 +260,10 @@ The channel setup scripts try to:
 - optionally restart the gateway and run a basic credential test
 - enter a Chinese interactive menu automatically when run without arguments
 - for Feishu, prefer the bundled official `@openclaw/feishu` plugin and fall back to installing the official package only when the bundled plugin is unavailable
-- for Feishu on Linux/macOS with `openclaw browser` available, default to the new-bot flow: open the official console, wait for Feishu login, auto-create the app/bot, capture `App ID` + `App Secret`, and finish the required console setup automatically
+- for Feishu, default the new-bot flow to an official temporary QR page: after entering the access key `megaaifeishu`, the operator can generate the official Feishu "create bot" QR code, scan it, and let the script capture `App ID` + `App Secret` automatically
 - for Feishu, keep a manual existing-bot binding flow when you already have `App ID` + `App Secret`
 - for Feishu, the operator guidance follows the official plugin doc: `https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh`
-- for Feishu on Linux, start a temporary web page before `openclaw channels add --channel feishu`; after entering the access key `megaaifeishu`, the operator can click a button to generate a Feishu auth link, complete OAuth, then let the script continue automatically
+- for Feishu existing-bot binding on Linux, start a temporary web page before `openclaw channels add --channel feishu`; after entering the access key `megaaifeishu`, the operator can click a button to generate a Feishu auth link, complete OAuth, then let the script continue automatically
 - for Feishu on Linux, the temporary page defaults to port `38459`; use `--feishu-web-auth-public-base-url` when the host is behind NAT/reverse proxy, or `--no-feishu-web-auth` to skip this step
 
 Use `openclaw channels list` and `openclaw gateway status --deep` after setup to verify the result.

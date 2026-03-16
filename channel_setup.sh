@@ -191,46 +191,10 @@ test_openclaw_browser_available() {
   openclaw browser --help >/dev/null 2>&1
 }
 
-test_feishu_browser_logged_in() {
-  local tabs_output=""
-
-  tabs_output="$(openclaw browser tabs 2>/dev/null || true)"
-  [ -n "$tabs_output" ] || return 1
-
-  printf '%s\n' "$tabs_output" | grep -Eq 'https://open\.feishu\.cn/app(\?[^[:space:]]*)?$'
-}
-
-wait_for_feishu_browser_login() {
-  local attempt=0
-
-  is_interactive_terminal || return 0
-
-  log_info $'\u8bf7\u5728 OpenClaw \u6d4f\u89c8\u5668\u4e2d\u626b\u7801\u767b\u5f55\u98de\u4e66\uff0c\u767b\u5f55\u5b8c\u6210\u540e\u811a\u672c\u4f1a\u81ea\u52a8\u7ee7\u7eed\u3002'
-  log_info $'\u6b63\u5728\u7b49\u5f85\u98de\u4e66\u767b\u5f55\u5b8c\u6210...'
-
-  while [ "$attempt" -lt 120 ]; do
-    if test_feishu_browser_logged_in; then
-      log_info $'\u68c0\u6d4b\u5230\u98de\u4e66\u767b\u5f55\u5b8c\u6210\uff0c\u7ee7\u7eed\u6267\u884c\u914d\u7f6e\u3002'
-      return 0
-    fi
-    sleep 5
-    attempt=$((attempt + 1))
-  done
-
-  log_warn $'\u7b49\u5f85\u98de\u4e66\u767b\u5f55\u8d85\u65f6\uff0c\u8bf7\u786e\u8ba4\u5df2\u767b\u5f55\u540e\u6309\u56de\u8f66\u7ee7\u7eed\uff0c\u6216\u6309 Ctrl+C \u53d6\u6d88\u3002'
-  wait_for_enter $'\u7b49\u5f85\u98de\u4e66\u767b\u5f55\u8d85\u65f6\uff0c\u8bf7\u786e\u8ba4\u5df2\u767b\u5f55\u540e\u6309\u56de\u8f66\u7ee7\u7eed\uff0c\u6216\u6309 Ctrl+C \u53d6\u6d88\u3002'
-}
-
 select_feishu_guide_mode() {
   case "$GUIDE_MODE" in
     browser)
-      if test_openclaw_browser_available; then
-        printf 'browser\n'
-      else
-        log_warn $'\u5f53\u524d\u672a\u68c0\u6d4b\u5230\u53ef\u7528\u7684 OpenClaw browser\uff0c\u5df2\u56de\u9000\u4e3a\u624b\u52a8\u5173\u8054\u73b0\u6709\u673a\u5668\u4eba\u6a21\u5f0f\u3002' >&2
-        GUIDE_MODE="manual"
-        printf 'manual\n'
-      fi
+      printf 'browser\n'
       return 0
       ;;
     manual)
@@ -250,16 +214,7 @@ select_feishu_guide_mode() {
   fi
 
   if ! is_interactive_terminal; then
-    if test_openclaw_browser_available; then
-      printf 'browser\n'
-    else
-      printf 'manual\n'
-    fi
-    return 0
-  fi
-
-  if ! test_openclaw_browser_available; then
-    printf 'manual\n'
+    printf 'browser\n'
     return 0
   fi
 
@@ -293,7 +248,6 @@ show_feishu_setup_guide() {
   local portal_url="https://open.feishu.cn/app?lang=zh-CN"
   local docs_url="https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh"
   local guide_mode=""
-  local open_method=""
 
   if ! is_interactive_terminal; then
     return 0
@@ -302,31 +256,29 @@ show_feishu_setup_guide() {
   guide_mode="$(select_feishu_guide_mode)"
   FEISHU_SELECTED_GUIDE_MODE="$guide_mode"
 
-  if open_method="$(open_external_url "$portal_url" "$([ "$guide_mode" = "browser" ] && printf '1' || printf '0')")"; then
-    if [ "$open_method" = "browser" ]; then
-      log_info $'\u5df2\u4f7f\u7528 OpenClaw browser \u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
-      printf '%s\n' $'  1. \u5728 OpenClaw browser \u91cc\u626b\u7801\u767b\u5f55\u98de\u4e66\u3002'
-      printf '%s\n' $'  2. \u811a\u672c\u4f1a\u81ea\u52a8\u521b\u5efa\u65b0\u673a\u5668\u4eba/\u5e94\u7528\uff0c\u5e76\u81ea\u52a8\u62ff\u5230 App ID \u548c App Secret\u3002'
-      printf '%s\n' $'  3. \u540e\u7eed Linux \u4f1a\u518d\u6253\u5f00\u4e34\u65f6\u6388\u6743\u9875\uff0c\u7528\u6765\u5b8c\u6210\u5b98\u65b9 OAuth \u626b\u7801\u6388\u6743\u3002'
-      printf '%s %s\n' $'\u5b98\u65b9\u63d2\u4ef6\u8bf4\u660e\uff1a' "$docs_url"
-      wait_for_feishu_browser_login
-      return 0
-    fi
-    log_info $'\u5df2\u4e3a\u4f60\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
-  else
-    log_warn "$(
-      printf '%s %s' $'\u672a\u80fd\u81ea\u52a8\u6253\u5f00\u6d4f\u89c8\u5668\uff0c\u8bf7\u624b\u52a8\u8bbf\u95ee\uff1a' "$portal_url"
-    )"
-  fi
-
   printf '%s %s\n' $'\u5b98\u65b9\u63d2\u4ef6\u8bf4\u660e\uff1a' "$docs_url"
 
-  printf '%s\n' $'  1. \u5982\u679c\u662f\u5173\u8054\u5df2\u6709\u673a\u5668\u4eba\uff0c\u8bf7\u5728\u5e94\u7528\u51ed\u8bc1\u4e0e\u57fa\u7840\u4fe1\u606f\u9875\u590d\u5236 App ID \u548c App Secret\u3002'
-  printf '%s\n' $'  2. \u786e\u8ba4\u5df2\u542f\u7528\u673a\u5668\u4eba\u80fd\u529b\uff0c\u5e76\u5f00\u901a\u6d88\u606f/\u7fa4\u7ec4/\u6587\u6863\u6240\u9700\u6743\u9650\u3002'
-  printf '%s\n' $'  3. \u914d\u7f6e\u4e8b\u4ef6\u8ba2\u9605\u65b9\u5f0f\u4e3a\u957f\u8fde\u63a5\uff08WebSocket\uff09\uff0c\u5e76\u6dfb\u52a0 `im.message.receive_v1`\u3002'
-  printf '%s\n' $'  4. \u521b\u5efa\u7248\u672c\u5e76\u53d1\u5e03\u5e94\u7528\u3002'
-  if is_linux_host; then
-    printf '%s\n' $'  5. Linux \u811a\u672c\u7a0d\u540e\u4f1a\u542f\u52a8\u4e34\u65f6 Feishu \u7f51\u9875\u6388\u6743\u9875\uff0c\u9ed8\u8ba4\u8bbf\u95ee\u5bc6\u94a5\u4e3a `megaaifeishu`\u3002'
+  if [ "$guide_mode" = "browser" ]; then
+    printf '%s\n' $'  1. 已选择“新建机器人”。当前不会先直接进入 OpenClaw browser 自动化。'
+    printf '%s\n' $'  2. 脚本稍后会先启动一个临时网页地址，输入访问密钥 `megaaifeishu` 后点击生成官方二维码。'
+    printf '%s\n' $'  3. 页面会直接显示飞书官方“一键创建机器人”二维码，使用飞书扫码即可。'
+    printf '%s\n' $'  4. 如果二维码过期，直接在网页里刷新重新生成即可。'
+    printf '%s\n' $'  5. 扫码创建成功后脚本会自动继续后续飞书配置流程。'
+  else
+    if open_external_url "$portal_url" >/dev/null 2>&1; then
+      log_info $'\u5df2\u4e3a\u4f60\u6253\u5f00\u98de\u4e66\u5f00\u53d1\u8005\u540e\u53f0\u3002'
+    else
+      log_warn "$(
+        printf '%s %s' $'\u672a\u80fd\u81ea\u52a8\u6253\u5f00\u6d4f\u89c8\u5668\uff0c\u8bf7\u624b\u52a8\u8bbf\u95ee\uff1a' "$portal_url"
+      )"
+    fi
+    printf '%s\n' $'  1. 如果是关联已有机器人，请在应用凭证与基础信息页复制 App ID 和 App Secret。'
+    printf '%s\n' $'  2. 确认已启用机器人能力，并开通消息/群组/文档所需权限。'
+    printf '%s\n' $'  3. 配置事件订阅方式为长连接（WebSocket）并添加 `im.message.receive_v1`。'
+    printf '%s\n' $'  4. 创建版本并发布应用。'
+    if is_linux_host; then
+      printf '%s\n' $'  5. Linux 脚本稍后会启动临时 Feishu 网页授权页，默认访问密钥为 `megaaifeishu`。'
+    fi
   fi
   wait_for_enter $'\u5b8c\u6210\u4ee5\u4e0a\u6b65\u9aa4\u540e\u6309\u56de\u8f66\u7ee7\u7eed\u3002'
 }
@@ -338,6 +290,13 @@ show_feishu_post_config_guide() {
   printf '%s\n' $'  3. \u8bf7\u5728 \u4e8b\u4ef6\u4e0e\u56de\u8c03 -> \u8ba2\u9605\u65b9\u5f0f \u91cc\u9009\u62e9 \u957f\u8fde\u63a5\uff08WebSocket\uff09\u3002'
   printf '%s\n' $'  4. \u6dfb\u52a0\u4e8b\u4ef6 `im.message.receive_v1`\u3002'
   printf '%s\n' $'  5. \u521b\u5efa\u7248\u672c\u5e76\u786e\u8ba4\u53d1\u5e03\u3002'
+}
+
+show_feishu_registration_post_guide() {
+  log_info $'\u5df2\u4e3a OpenClaw \u5199\u5165\u65b0\u5efa\u98de\u4e66\u673a\u5668\u4eba\u7684\u5e94\u7528\u51ed\u8bc1\u3002'
+  printf '%s\n' $'  1. \u5728\u98de\u4e66\u91cc\u627e\u5230\u65b0\u5efa\u7684\u673a\u5668\u4eba\uff0c\u5148\u53d1\u4e00\u6761\u6d88\u606f\u6d4b\u8bd5\u3002'
+  printf '%s\n' $'  2. \u5982\u9700\u8981 OpenClaw \u4ee5\u4f60\u7684\u8eab\u4efd\u8bbf\u95ee\u6587\u6863/\u6d88\u606f/\u65e5\u5386\u7b49\u80fd\u529b\uff0c\u53ef\u5728\u98de\u4e66\u5bf9\u8bdd\u91cc\u53d1\u9001 `/feishu auth`\u3002'
+  printf '%s\n' $'  3. \u53ef\u53d1\u9001 `/feishu start` \u68c0\u67e5\u63d2\u4ef6\u662f\u5426\u5df2\u5b89\u88c5\u6210\u529f\u3002'
 }
 
 show_channel_menu() {
@@ -383,6 +342,31 @@ show_channel_menu() {
 
 configure_menu_options() {
   [ "$INTERACTIVE_MENU" -eq 1 ] || return 0
+
+  if [ "$CHANNEL" = "feishu" ] && [ -z "$APP_ID" ] && [ -z "$APP_SECRET" ]; then
+    while true; do
+      printf '\n'
+      printf '%s\n' $'飞书接入方式'
+      printf '%s\n' $'  1. 新建机器人（先走临时网页授权，再继续自动配置，推荐）'
+      printf '%s\n' $'  2. 关联已有机器人（手动填写已有 App ID/App Secret）'
+      printf '%s' $'请选择飞书接入方式: ' >&2
+      read -r choice || true
+
+      case "${choice:-}" in
+        1)
+          GUIDE_MODE="browser"
+          break
+          ;;
+        2)
+          GUIDE_MODE="manual"
+          break
+          ;;
+        *)
+          log_warn $'无效选择，请重新输入。'
+          ;;
+      esac
+    done
+  fi
 
   if prompt_yes_no $'\u914d\u7f6e\u5b8c\u6210\u540e\u662f\u5426\u81ea\u52a8\u91cd\u542f OpenClaw \u7f51\u5173\uff1f' "y"; then
     RESTART_GATEWAY=1
@@ -755,55 +739,69 @@ auto_approve_first_feishu_dm_user() {
   log_warn "If needed, run: openclaw pairing list feishu --json"
 }
 
-resolve_feishu_browser_helper_path() {
-  local script_dir=""
-  local local_helper=""
-  local helper_path="/tmp/openclaw-feishu-browser-automation.cjs"
-  local helper_url="https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/scripts/feishu-browser-automation.cjs"
+resolve_feishu_registration_helper() {
+  local repo_dir=""
+  local helper_path=""
+  local temp_path=""
+  local helper_url="https://raw.githubusercontent.com/wellwellwelldonenow-spec/openclaw-installer/main/scripts/feishu-registration-web.mjs"
 
-  script_dir="$(resolve_script_dir 2>/dev/null || true)"
-  local_helper="${script_dir}/scripts/feishu-browser-automation.cjs"
-  if [ -f "$local_helper" ]; then
-    printf '%s\n' "$local_helper"
-    return 0
+  repo_dir="$(resolve_script_dir 2>/dev/null || true)"
+  if [ -n "$repo_dir" ]; then
+    helper_path="$repo_dir/scripts/feishu-registration-web.mjs"
+    if [ -f "$helper_path" ]; then
+      printf '%s\n' "$helper_path"
+      return 0
+    fi
   fi
 
-  if [ ! -f "$helper_path" ]; then
-    command -v curl >/dev/null 2>&1 || fail "curl not found. Unable to download the Feishu browser automation helper."
-    log_info "Downloading Feishu browser automation helper" >&2
-    curl -fsSL "$helper_url" -o "$helper_path" || fail "Failed to download Feishu browser automation helper"
+  command -v curl >/dev/null 2>&1 || fail "curl not found. Unable to download the Feishu registration helper."
+  temp_path="$(mktemp /tmp/openclaw_feishu_registration.XXXXXX.mjs 2>/dev/null || printf '/tmp/openclaw_feishu_registration.mjs')"
+  curl -fsSL "$helper_url" -o "$temp_path" || fail "Failed to download Feishu registration helper from $helper_url"
+  printf '%s\n' "$temp_path"
+}
+
+run_feishu_web_registration() {
+  local helper_path=""
+  local cleanup_helper=0
+  local result_file=""
+  local node_args=()
+
+  helper_path="$(resolve_feishu_registration_helper)"
+  case "$helper_path" in
+    /tmp/openclaw_feishu_registration.*.mjs|/tmp/openclaw_feishu_registration.mjs) cleanup_helper=1 ;;
+  esac
+
+  result_file="$(mktemp /tmp/openclaw_feishu_registration_result.XXXXXX.json 2>/dev/null || printf '/tmp/openclaw_feishu_registration_result.json')"
+
+  log_info "Starting temporary Feishu registration page before channel creation"
+  log_info "Default access key: ${FEISHU_WEB_AUTH_SECRET}"
+
+  node_args=(
+    "$helper_path"
+    --auth-secret "$FEISHU_WEB_AUTH_SECRET"
+    --port "$FEISHU_WEB_AUTH_PORT"
+    --timeout-sec "$FEISHU_WEB_AUTH_TIMEOUT_SEC"
+    --brand feishu
+    --result-file "$result_file"
+  )
+
+  if [ -n "$FEISHU_WEB_AUTH_PUBLIC_BASE_URL" ]; then
+    node_args+=(--public-base-url "$FEISHU_WEB_AUTH_PUBLIC_BASE_URL")
   fi
 
-  printf '%s\n' "$helper_path"
-}
+  if ! node "${node_args[@]}"; then
+    rm -f "$result_file"
+    [ "$cleanup_helper" -eq 1 ] && rm -f "$helper_path"
+    fail "Feishu temporary registration step failed."
+  fi
 
-invoke_feishu_browser_automation() {
-  local helper_path=""
-  local helper_output=""
-  local app_name="OpenClaw Gateway $(date +%Y%m%d-%H%M%S)"
-  local app_description="OpenClaw Feishu channel integration"
+  APP_ID="$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); process.stdout.write(data.appId || '')" "$result_file" 2>/dev/null || true)"
+  APP_SECRET="$(node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); process.stdout.write(data.appSecret || '')" "$result_file" 2>/dev/null || true)"
+  rm -f "$result_file"
+  [ "$cleanup_helper" -eq 1 ] && rm -f "$helper_path"
 
-  helper_path="$(resolve_feishu_browser_helper_path)"
-  log_info "Running Feishu browser automation for new bot creation" >&2
-  helper_output="$(node "$helper_path" --app-name "$app_name" --app-description "$app_description")" || return 1
-
-  APP_ID="$(printf '%s' "$helper_output" | node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); process.stdout.write(data.appId || '')")"
-  APP_SECRET="$(printf '%s' "$helper_output" | node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); process.stdout.write(data.appSecret || '')")"
-
-  [ -n "$APP_ID" ] && [ -n "$APP_SECRET" ] || return 1
-  log_info "Feishu browser automation completed: $APP_ID" >&2
-}
-
-invoke_feishu_browser_finalize() {
-  local helper_path=""
-  local helper_output=""
-
-  helper_path="$(resolve_feishu_browser_helper_path)"
-  log_info "Running Feishu browser post-config automation" >&2
-  helper_output="$(node "$helper_path" --mode finalize --app-id "$APP_ID" --version-notes "OpenClaw Feishu channel auto setup")" || return 1
-
-  printf '%s' "$helper_output" | node -e "const fs=require('fs'); const data=JSON.parse(fs.readFileSync(0,'utf8')); if (!data.published) process.exit(1)" || return 1
-  log_info "Feishu browser post-config completed: $APP_ID" >&2
+  [ -n "$APP_ID" ] && [ -n "$APP_SECRET" ] || fail "Official Feishu registration did not return app credentials."
+  log_info "Temporary Feishu registration completed, continuing channel setup"
 }
 
 resolve_feishu_web_auth_helper() {
@@ -923,7 +921,6 @@ setup_slack() {
 
 setup_feishu() {
   local selected_guide_mode="$GUIDE_MODE"
-  local browser_post_config_done=0
 
   if is_interactive_terminal && { [ -z "$APP_ID" ] || [ -z "$APP_SECRET" ] || [ "$GUIDE_MODE" != "auto" ]; }; then
     show_feishu_setup_guide
@@ -933,8 +930,9 @@ setup_feishu() {
   fi
 
   if [ "$selected_guide_mode" = "browser" ] && { [ -z "$APP_ID" ] || [ -z "$APP_SECRET" ]; }; then
-    if ! invoke_feishu_browser_automation; then
-      log_warn "Feishu browser automation failed; falling back to manual existing-bot binding."
+    if ! run_feishu_web_registration; then
+      log_warn "Feishu official registration failed; falling back to manual existing-bot binding."
+      selected_guide_mode="manual"
     fi
   fi
 
@@ -942,7 +940,9 @@ setup_feishu() {
   APP_SECRET="$(prompt_value "Feishu app secret" "$APP_SECRET" 1)"
   require_value "--app-id" "$APP_ID"
   require_value "--app-secret" "$APP_SECRET"
-  run_feishu_linux_web_auth
+  if [ "$selected_guide_mode" != "browser" ]; then
+    run_feishu_linux_web_auth
+  fi
 
   if ! openclaw plugins enable feishu >/dev/null 2>&1; then
     log_info "Bundled Feishu plugin not available, installing official package @openclaw/feishu"
@@ -966,18 +966,11 @@ setup_feishu() {
   openclaw config set channels.feishu.threadSession true >/dev/null 2>&1 || log_warn "Failed to set feishu threadSession=true"
   restart_gateway
 
-  if [ "$selected_guide_mode" = "browser" ]; then
-    sleep 5
-    if invoke_feishu_browser_finalize; then
-      browser_post_config_done=1
-    else
-      log_warn "Feishu browser post-config automation failed; falling back to manual finishing steps."
-    fi
-  fi
-
   log_info "Feishu configured"
   printf '  app id: %s\n' "$(mask_value "$APP_ID" 8 4)"
-  if [ "$browser_post_config_done" -ne 1 ]; then
+  if [ "$selected_guide_mode" = "browser" ]; then
+    show_feishu_registration_post_guide
+  else
     show_feishu_post_config_guide
   fi
   run_test_feishu
