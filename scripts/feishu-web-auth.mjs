@@ -48,7 +48,7 @@ function parseArgs(argv) {
         index += 1;
         break;
       case "--timeout-sec":
-        options.timeoutSec = Number(next || DEFAULT_TIMEOUT_SEC) || DEFAULT_TIMEOUT_SEC;
+        options.timeoutSec = next === undefined ? DEFAULT_TIMEOUT_SEC : Number(next);
         index += 1;
         break;
       case "--public-base-url":
@@ -70,7 +70,7 @@ function parseArgs(argv) {
   if (!options.appSecret) {
     throw new Error("Missing required argument --app-secret");
   }
-  if (!Number.isInteger(options.timeoutSec) || options.timeoutSec <= 0) {
+  if (!Number.isInteger(options.timeoutSec) || options.timeoutSec < 0) {
     throw new Error(`Invalid --timeout-sec: ${options.timeoutSec}`);
   }
   if (!Number.isInteger(options.port) || options.port < 0 || options.port > 65535) {
@@ -101,9 +101,11 @@ let server;
 let publicBaseUrl = "";
 let listenPort = options.port;
 const startedAt = Date.now();
-const timeoutHandle = setTimeout(() => {
-  failAndExit("等待飞书网页授权超时，请重新运行脚本。", 1);
-}, options.timeoutSec * 1000);
+const timeoutHandle = options.timeoutSec > 0
+  ? setTimeout(() => {
+      failAndExit("等待飞书网页授权超时，请重新运行脚本。", 1);
+    }, options.timeoutSec * 1000)
+  : null;
 
 function log(message) {
   process.stdout.write(`${message}\n`);
