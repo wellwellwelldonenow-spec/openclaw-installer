@@ -960,6 +960,10 @@ setup_feishu() {
   openclaw config set channels.feishu.connectionMode websocket >/dev/null 2>&1 || log_warn "Failed to set feishu connectionMode=websocket"
   openclaw config set channels.feishu.domain feishu >/dev/null 2>&1 || log_warn "Failed to set feishu domain=feishu"
   openclaw config set channels.feishu.requireMention true >/dev/null 2>&1 || log_warn "Failed to set feishu requireMention=true"
+  openclaw config set channels.feishu.streaming true >/dev/null 2>&1 || log_warn "Failed to set feishu streaming=true"
+  openclaw config set channels.feishu.footer.elapsed true >/dev/null 2>&1 || log_warn "Failed to set feishu footer.elapsed=true"
+  openclaw config set channels.feishu.footer.status true >/dev/null 2>&1 || log_warn "Failed to set feishu footer.status=true"
+  openclaw config set channels.feishu.threadSession true >/dev/null 2>&1 || log_warn "Failed to set feishu threadSession=true"
   restart_gateway
 
   if [ "$selected_guide_mode" = "browser" ]; then
