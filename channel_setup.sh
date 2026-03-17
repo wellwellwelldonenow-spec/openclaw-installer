@@ -21,7 +21,7 @@ FEISHU_AUTO_APPROVE_FIRST_DM=1
 FEISHU_AUTO_APPROVE_TIMEOUT_SEC=0
 FEISHU_WEB_AUTH_ENABLED=1
 FEISHU_WEB_AUTH_SECRET="megaaifeishu"
-FEISHU_WEB_AUTH_TIMEOUT_SEC=900
+FEISHU_WEB_AUTH_TIMEOUT_SEC=0
 FEISHU_WEB_AUTH_PORT=38459
 FEISHU_WEB_AUTH_PUBLIC_BASE_URL=""
 
@@ -68,7 +68,7 @@ General options:
   --feishu-web-auth-port <port>
                             Public listen port for the temporary Feishu web auth page (default: 38459)
   --feishu-web-auth-timeout <seconds>
-                            Max wait time for temporary Feishu web auth success; 0 means no timeout (default: 900)
+                            Max wait time for temporary Feishu web auth success; 0 means no timeout (default: 0)
   --feishu-web-auth-public-base-url <url>
                             Optional public URL to print when the Linux host is behind a reverse proxy/NAT
   --restart              Restart gateway after changes (default)

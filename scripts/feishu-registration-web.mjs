@@ -6,7 +6,7 @@ import http from "node:http";
 import os from "node:os";
 
 const DEFAULT_SECRET = "megaaifeishu";
-const DEFAULT_TIMEOUT_SEC = 900;
+const DEFAULT_TIMEOUT_SEC = 0;
 const DEFAULT_PORT = 38459;
 const DEFAULT_ENV = "prod";
 const SESSION_COOKIE = "openclaw_feishu_registration";
@@ -116,7 +116,7 @@ let publicBaseUrl = "";
 let listenPort = options.port;
 const timeoutHandle = options.timeoutSec > 0
   ? setTimeout(() => {
-      failAndExit("等待飞书新建机器人二维码超时，请重新运行脚本。", 1);
+      failAndExit("等待飞书新建机器人二维码超时，请重新运行脚本，或者把 --timeout-sec 设为 0 保持网页常驻。", 1);
     }, options.timeoutSec * 1000)
   : null;
 
@@ -970,6 +970,7 @@ async function main() {
   log(`临时网页创建地址（本地）: ${localBaseUrl}`);
   log(`访问密钥: ${options.authSecret}`);
   log("操作说明: 打开上面的网页地址，输入访问密钥，点击“生成官方二维码”。");
+  log("二维码过期后网页不会关闭，直接点“重新生成二维码”即可。");
   log("扫码创建成功后脚本会自动继续，网页可以直接关闭。");
   log("==================================================");
   log("");

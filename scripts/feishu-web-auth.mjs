@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 const DEFAULT_SECRET = "megaaifeishu";
-const DEFAULT_TIMEOUT_SEC = 900;
+const DEFAULT_TIMEOUT_SEC = 0;
 const DEFAULT_PORT = 38459;
 const SESSION_COOKIE = "openclaw_feishu_web_auth";
 
