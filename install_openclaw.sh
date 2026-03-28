@@ -1343,6 +1343,29 @@ rewrite_gateway_service_definition() {
   rewrite_macos_gateway_launch_agent "$config_path" "$state_dir"
 }
 
+ensure_linux_user_linger() {
+  local current_user linger_state
+
+  [ "$OS" = "linux" ] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+  command -v loginctl >/dev/null 2>&1 || return 0
+
+  current_user="$(id -un 2>/dev/null || true)"
+  [ -n "$current_user" ] || return 0
+
+  linger_state="$(loginctl show-user "$current_user" -p Linger --value 2>/dev/null || true)"
+  if [ "$linger_state" = "yes" ]; then
+    return 0
+  fi
+
+  if run_privileged loginctl enable-linger "$current_user"; then
+    log "已为 Linux 用户 $current_user 启用 linger，OpenClaw 网关将在退出会话后继续常驻"
+    return 0
+  fi
+
+  warn "未能为用户 $current_user 启用 linger；如果退出登录后网关消失，请手动执行：loginctl enable-linger $current_user"
+}
+
 write_service_env() {
   local config_home env_file cleaned_path config_path state_dir
   config_home="$HOME/.openclaw"
@@ -1524,6 +1547,7 @@ repair_gateway_service() {
     run_openclaw_with_service_env "$config_path" "$state_dir" doctor --yes || true
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway install --runtime node --port "$OPENCLAW_PORT" --force
   rewrite_gateway_service_definition "$config_path" "$state_dir"
+  ensure_linux_user_linger
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway restart || \
     run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
   sleep 3
@@ -1537,6 +1561,7 @@ install_and_start_gateway() {
   log '安装并启动网关'
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway install --runtime node --port "$OPENCLAW_PORT" --force
   rewrite_gateway_service_definition "$config_path" "$state_dir"
+  ensure_linux_user_linger
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway restart || \
     run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
   sleep 3

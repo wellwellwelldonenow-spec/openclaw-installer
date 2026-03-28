@@ -552,9 +552,37 @@ restart_gateway() {
     return 0
   fi
 
+  ensure_linux_user_linger
   log_info "Restarting OpenClaw gateway"
   openclaw gateway restart >/dev/null 2>&1 || openclaw gateway start >/dev/null 2>&1 || \
     log_warn "Gateway restart/start failed. Run 'openclaw gateway status --deep' manually."
+}
+
+ensure_linux_user_linger() {
+  local current_user linger_state
+
+  [ "$(uname -s 2>/dev/null || true)" = "Linux" ] || return 0
+  command -v loginctl >/dev/null 2>&1 || return 0
+
+  current_user="$(id -un 2>/dev/null || true)"
+  [ -n "$current_user" ] || return 0
+
+  linger_state="$(loginctl show-user "$current_user" -p Linger --value 2>/dev/null || true)"
+  if [ "$linger_state" = "yes" ]; then
+    return 0
+  fi
+
+  if loginctl enable-linger "$current_user" >/dev/null 2>&1; then
+    log_info "Enabled linger for Linux user $current_user so the OpenClaw gateway stays online after logout"
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1 && sudo loginctl enable-linger "$current_user" >/dev/null 2>&1; then
+    log_info "Enabled linger for Linux user $current_user so the OpenClaw gateway stays online after logout"
+    return 0
+  fi
+
+  log_warn "Could not enable linger for Linux user $current_user. If the gateway stops after logout, run: loginctl enable-linger $current_user"
 }
 
 run_test_telegram() {

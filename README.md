@@ -348,6 +348,8 @@ openclaw gateway --port 18789
 openclaw gateway restart
 ```
 
+Linux 说明：安装脚本会为当前用户自动执行 `loginctl enable-linger <user>`，避免 OpenClaw Gateway 因用户退出会话而停止。如果你的机器禁用了 `systemd-logind` 或自动授权失败，请手动执行一次该命令。
+
 4. 验证安装
 
 ```bash
