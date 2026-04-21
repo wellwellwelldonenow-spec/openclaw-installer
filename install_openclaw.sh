@@ -431,6 +431,54 @@ detect_platform() {
   log "检测到系统：$OS ($ARCH)"
 }
 
+linux_systemd_user_bus_ready() {
+  local uid runtime_dir bus_address
+
+  [ "$OS" = "linux" ] || return 1
+  command -v systemctl >/dev/null 2>&1 || return 1
+
+  uid="$(id -u 2>/dev/null || true)"
+  [ -n "$uid" ] || return 1
+
+  runtime_dir="${XDG_RUNTIME_DIR:-}"
+  if [ -z "$runtime_dir" ] && [ -d "/run/user/$uid" ]; then
+    runtime_dir="/run/user/$uid"
+  fi
+
+  bus_address="${DBUS_SESSION_BUS_ADDRESS:-}"
+  if [ -z "$bus_address" ] && [ -n "$runtime_dir" ] && [ -S "$runtime_dir/bus" ]; then
+    bus_address="unix:path=$runtime_dir/bus"
+  fi
+
+  if [ -n "$runtime_dir" ]; then
+    export XDG_RUNTIME_DIR="$runtime_dir"
+  fi
+
+  if [ -n "$bus_address" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="$bus_address"
+  fi
+
+  systemctl --user show-environment >/dev/null 2>&1
+}
+
+ensure_linux_systemd_user_bus() {
+  local uid
+
+  [ "$OS" = "linux" ] || return 0
+  command -v systemctl >/dev/null 2>&1 || return 0
+
+  if linux_systemd_user_bus_ready; then
+    return 0
+  fi
+
+  uid="$(id -u 2>/dev/null || printf '%s' '?')"
+  warn "当前 shell 无法访问 systemd --user 会话总线，网关服务无法安装到用户级 systemd"
+  warn "当前 XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<empty>}"
+  warn "当前 DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-<empty>}"
+  warn "请确认 /run/user/$uid/bus 存在；如存在，可先执行：export XDG_RUNTIME_DIR=/run/user/$uid && export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus"
+  return 1
+}
+
 node_major_version() {
   if ! command -v node >/dev/null 2>&1; then
     return 1
@@ -1333,7 +1381,9 @@ for (const [key, value] of replacements) {
 fs.writeFileSync(unitFile, text);
 NODE
 
-  systemctl --user daemon-reload
+  if linux_systemd_user_bus_ready; then
+    systemctl --user daemon-reload
+  fi
 }
 
 rewrite_gateway_service_definition() {
@@ -1367,16 +1417,18 @@ ensure_linux_user_linger() {
 }
 
 write_service_env() {
-  local config_home env_file cleaned_path config_path state_dir
+  local config_home env_file gateway_env_file cleaned_path config_path state_dir env_target
   config_home="$HOME/.openclaw"
   env_file="$config_home/.env"
+  gateway_env_file="$config_home/gateway.systemd.env"
   config_path="${1:-$HOME/.openclaw/openclaw.json}"
   state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 
   mkdir -p "$config_home"
   cleaned_path="$(build_service_path)"
 
-  cat > "$env_file" <<EOF
+  for env_target in "$env_file" "$gateway_env_file"; do
+    cat > "$env_target" <<EOF
 PATH=$cleaned_path
 OPENCLAW_PORT=$OPENCLAW_PORT
 OPENCLAW_GATEWAY_PORT=$OPENCLAW_PORT
@@ -1391,8 +1443,10 @@ http_proxy=
 https_proxy=
 all_proxy=
 EOF
+  done
 
   log "已写入服务环境文件：$env_file"
+  log "已同步 systemd 环境文件：$gateway_env_file"
 }
 
 port_is_listening() {
@@ -1483,11 +1537,41 @@ gateway_log_path() {
 }
 
 gateway_health_check() {
-  local status_output
+  local status_output config_path state_dir
 
+  config_path="$(resolve_config_path)"
+  state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
   status_output="$(mktemp /tmp/openclaw_gateway_status.XXXXXX 2>/dev/null || printf '/tmp/openclaw_gateway_status.txt')"
-  run_with_timeout 20 openclaw gateway status --deep >"$status_output" 2>&1 || true
-  grep -q 'RPC probe: ok' "$status_output"
+  run_openclaw_with_service_env_timeout 20 "$config_path" "$state_dir" gateway status --deep >"$status_output" 2>&1 || true
+  grep -q 'RPC probe: ok' "$status_output" || return 1
+
+  if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+    linux_systemd_user_bus_ready || return 1
+    grep -Eq '^Runtime: running\b' "$status_output" || return 1
+  fi
+
+  return 0
+}
+
+wait_for_gateway_health() {
+  local max_attempts="${1:-24}" sleep_seconds="${2:-5}" attempt=1
+
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if gateway_health_check; then
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$max_attempts" ]; then
+      if [ "$attempt" -eq 1 ] || [ $((attempt % 6)) -eq 0 ]; then
+        warn "网关仍在预热，第 ${attempt}/${max_attempts} 次健康检查未通过，${sleep_seconds}s 后重试"
+      fi
+      sleep "$sleep_seconds"
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  return 1
 }
 
 run_gateway_foreground_probe() {
@@ -1543,6 +1627,7 @@ repair_gateway_service() {
   state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 
   warn '网关健康检查失败，尝试执行 openclaw doctor --fix 自动修复服务'
+  ensure_linux_systemd_user_bus || true
   run_openclaw_with_service_env "$config_path" "$state_dir" doctor --fix || \
     run_openclaw_with_service_env "$config_path" "$state_dir" doctor --yes || true
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway install --runtime node --port "$OPENCLAW_PORT" --force
@@ -1558,6 +1643,7 @@ install_and_start_gateway() {
   config_path="$(resolve_config_path)"
   state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
 
+  ensure_linux_systemd_user_bus || fail "当前 shell 无法访问 systemd --user，请先修复 user bus 环境后重新运行安装脚本"
   log '安装并启动网关'
   run_openclaw_with_service_env "$config_path" "$state_dir" gateway install --runtime node --port "$OPENCLAW_PORT" --force
   rewrite_gateway_service_definition "$config_path" "$state_dir"
@@ -1566,11 +1652,11 @@ install_and_start_gateway() {
     run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
   sleep 3
 
-  if ! gateway_health_check; then
+  if ! wait_for_gateway_health; then
     repair_gateway_service
   fi
 
-  if ! gateway_health_check; then
+  if ! wait_for_gateway_health; then
     diagnose_gateway_failure
     fail "网关仍未就绪，请优先查看：openclaw gateway status --deep && openclaw logs --follow"
   fi
@@ -2142,7 +2228,7 @@ restart_gateway_after_browser_repair() {
     run_openclaw_with_service_env "$config_path" "$state_dir" gateway start || true
   sleep 3
 
-  if ! gateway_health_check; then
+  if ! wait_for_gateway_health; then
     repair_gateway_service
   fi
 }
@@ -2161,8 +2247,8 @@ probe_browser_runtime() {
   local config_path="$1" state_dir="$2" probe_log="$3" attempt probe_output=""
 
   for attempt in 1 2 3 4 5; do
-    if run_openclaw_gateway_rpc_with_service_env_timeout 30 "$config_path" "$state_dir" browser start --json >"$probe_log" 2>&1; then
-      run_openclaw_gateway_rpc_with_service_env_timeout 30 "$config_path" "$state_dir" browser stop --json >/dev/null 2>&1 || true
+    if run_openclaw_gateway_rpc_with_service_env_timeout 30 "$config_path" "$state_dir" browser start >"$probe_log" 2>&1; then
+      run_openclaw_gateway_rpc_with_service_env_timeout 30 "$config_path" "$state_dir" browser stop >/dev/null 2>&1 || true
       return 0
     fi
 
@@ -2426,6 +2512,7 @@ remove_openclaw_global_installs() {
 
 remove_gateway_service() {
   if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+    linux_systemd_user_bus_ready || true
     systemctl --user stop openclaw-gateway.service >/dev/null 2>&1 || true
     systemctl --user disable openclaw-gateway.service >/dev/null 2>&1 || true
     remove_path_if_exists "$HOME/.config/systemd/user/openclaw-gateway.service"
