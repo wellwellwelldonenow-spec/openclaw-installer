@@ -546,6 +546,84 @@ fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
 NODE
 }
 
+upsert_env_var_file() {
+  local file_path="$1"
+  local key="$2"
+  local value="$3"
+  local temp_file=""
+
+  mkdir -p "$(dirname "$file_path")"
+  touch "$file_path"
+  temp_file="$(mktemp "${file_path##*/}.XXXXXX")" || return 1
+
+  awk -v key="$key" -v value="$value" '
+    BEGIN { replaced = 0 }
+    index($0, key "=") == 1 {
+      if (!replaced) {
+        print key "=" value
+        replaced = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (!replaced) {
+        print key "=" value
+      }
+    }
+  ' "$file_path" >"$temp_file"
+
+  mv "$temp_file" "$file_path"
+}
+
+sync_feishu_env_credentials() {
+  local config_home="$HOME/.openclaw"
+  local env_target=""
+
+  for env_target in "$config_home/.env" "$config_home/gateway.systemd.env"; do
+    upsert_env_var_file "$env_target" "FEISHU_APP_ID" "$APP_ID"
+    upsert_env_var_file "$env_target" "FEISHU_APP_SECRET" "$APP_SECRET"
+  done
+}
+
+ensure_feishu_channel_runtime_config() {
+  ensure_config_file
+
+  node - "$CONFIG_PATH" <<'NODE'
+const fs = require('fs');
+
+const [configPath] = process.argv.slice(2);
+let config = {};
+
+if (fs.existsSync(configPath)) {
+  const raw = fs.readFileSync(configPath, 'utf8').trim();
+  if (raw) {
+    config = JSON.parse(raw);
+  }
+}
+
+config.plugins = config.plugins || {};
+config.plugins.allow = Array.isArray(config.plugins.allow) ? config.plugins.allow : [];
+config.plugins.entries = config.plugins.entries && typeof config.plugins.entries === 'object' ? config.plugins.entries : {};
+config.channels = config.channels && typeof config.channels === 'object' ? config.channels : {};
+
+if (!config.plugins.allow.includes('feishu')) {
+  config.plugins.allow.push('feishu');
+}
+
+config.plugins.entries.feishu = Object.assign({}, config.plugins.entries.feishu || {}, { enabled: true });
+
+const currentChannel = config.channels.feishu && typeof config.channels.feishu === 'object' ? config.channels.feishu : {};
+config.channels.feishu = {
+  enabled: true,
+  dmPolicy: typeof currentChannel.dmPolicy === 'string' ? currentChannel.dmPolicy : 'pairing',
+  groupPolicy: typeof currentChannel.groupPolicy === 'string' ? currentChannel.groupPolicy : 'allowlist'
+};
+
+fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+NODE
+}
+
 restart_gateway() {
   if [ "$RESTART_GATEWAY" -ne 1 ]; then
     log_info "Gateway restart skipped"
@@ -979,19 +1057,11 @@ setup_feishu() {
   fi
 
   ensure_plugin_enabled feishu
-  ensure_plugin_config feishu
+  ensure_feishu_channel_runtime_config
+  sync_feishu_env_credentials
   openclaw channels add --channel feishu >/dev/null 2>&1 || \
     log_warn "openclaw channels add --channel feishu returned non-zero; verify with 'openclaw channels list'"
-  openclaw config set channels.feishu.appId "$APP_ID" >/dev/null 2>&1 || log_warn "Failed to set feishu appId"
-  openclaw config set channels.feishu.appSecret "$APP_SECRET" >/dev/null 2>&1 || log_warn "Failed to set feishu appSecret"
-  openclaw config set channels.feishu.enabled true >/dev/null 2>&1 || log_warn "Failed to set feishu enabled=true"
-  openclaw config set channels.feishu.connectionMode websocket >/dev/null 2>&1 || log_warn "Failed to set feishu connectionMode=websocket"
-  openclaw config set channels.feishu.domain feishu >/dev/null 2>&1 || log_warn "Failed to set feishu domain=feishu"
-  openclaw config set channels.feishu.requireMention true >/dev/null 2>&1 || log_warn "Failed to set feishu requireMention=true"
-  openclaw config set channels.feishu.streaming true >/dev/null 2>&1 || log_warn "Failed to set feishu streaming=true"
-  openclaw config set channels.feishu.footer.elapsed true >/dev/null 2>&1 || log_warn "Failed to set feishu footer.elapsed=true"
-  openclaw config set channels.feishu.footer.status true >/dev/null 2>&1 || log_warn "Failed to set feishu footer.status=true"
-  openclaw config set channels.feishu.threadSession true >/dev/null 2>&1 || log_warn "Failed to set feishu threadSession=true"
+  openclaw config validate >/dev/null 2>&1 || log_warn "OpenClaw config validate returned non-zero after Feishu setup"
   restart_gateway
 
   log_info "Feishu configured"
